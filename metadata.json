@@ -1,0 +1,8 @@
+{
+  "name": "jRemix 平台作业端 - 礼品卡流转控制中心",
+  "description": "礼品卡流转作业控制大盘与客户交易管控系统，覆盖工作台、交易管理、客户管理、增长运营、财务结算、经营分析及业务配置。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
