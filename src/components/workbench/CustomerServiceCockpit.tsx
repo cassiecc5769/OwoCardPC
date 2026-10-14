@@ -31,6 +31,7 @@ export type OrderOperationalStatus =
 
 export type OrderFilterTab =
   | 'all_pending' // 全部待处理
+  | 'failed_pending_audit' // 失败待审核
   | 'pending_claim' // 无商户接卡
   | 'merchant_reported_anomaly' // 商户提交异常
   | 'manual_recalled_pending' // 已撤回·待处理
@@ -89,6 +90,7 @@ export const formatSeconds = (seconds: number) => {
 export type CardActionModalType =
   | 'dispatch'
   | 'editCard'
+  | 'auditFailed'
   | 'splitOrder'
   | 'transfer'
   | 'directProcess'
@@ -100,6 +102,22 @@ export type CardActionModalType =
 export interface CardActionModalState {
   type: CardActionModalType;
   task: CardOrderTask;
+}
+
+interface SplitOrderDraft {
+  id: string;
+  selectedImageIds: string[];
+  selectedPinIds: string[];
+  selectedExpiryIds: string[];
+  selectedReceiptIds: string[];
+  cardType: string;
+  country: string;
+  mediaType: string;
+  speed: string;
+  faceValue: string;
+  quantity: string;
+  purchaseRate: string;
+  note: string;
 }
 
 export const CARD_ACTION_MODAL_CONFIG: Record<
@@ -131,6 +149,15 @@ export const CARD_ACTION_MODAL_CONFIG: Record<
     iconBg: 'bg-indigo-100',
     iconColor: 'text-indigo-600',
     description: '人工修正卡种、卡密、面额或卡图解析数据',
+  },
+  auditFailed: {
+    title: '立即审核',
+    badge: '失败审核',
+    badgeClass: 'bg-rose-100 text-rose-700',
+    icon: 'fact_check',
+    iconBg: 'bg-rose-100',
+    iconColor: 'text-rose-600',
+    description: '审核失败待审核卡单',
   },
   splitOrder: {
     title: '拆单处理',
@@ -272,6 +299,11 @@ export const PLATFORM_CUSTOMER_SERVICES: PlatformCustomerService[] = [
     isWorking: false,
   },
 ];
+
+const CURRENT_CUSTOMER_SERVICE_ID = 'cs_qq';
+
+const isAssignedToCurrentCustomerService = (task: CardOrderTask) =>
+  task.assignedCs?.id === CURRENT_CUSTOMER_SERVICE_ID;
 
 export type SyncUserInfoType = '无效卡同步' | '其他';
 
@@ -539,6 +571,9 @@ export interface CardOrderTask {
     imageReflections: boolean; // 是否反光
   };
   cardItems?: MockCardCodeImagePair[]; // 卡图卡密凭证清单
+  pinItems?: MockCardPinItem[];
+  expiryItems?: MockCardExpiryItem[];
+  receiptItems?: MockCardReceiptItem[];
   assignedCs?: {
     id: string;
     name: string;
@@ -578,6 +613,17 @@ export const getTaskCardItems = (task: CardOrderTask): MockCardCodeImagePair[] =
     ];
   }
   return [];
+};
+
+export const getTaskPinItems = (task: CardOrderTask): MockCardPinItem[] => task.pinItems || [];
+export const getTaskExpiryItems = (task: CardOrderTask): MockCardExpiryItem[] => task.expiryItems || [];
+export const getTaskReceiptItems = (task: CardOrderTask): MockCardReceiptItem[] => task.receiptItems || [];
+
+export const getTaskAuditProofImages = (task: CardOrderTask) => {
+  const taskImages = getTaskCardItems(task)
+    .filter(item => item.imageUrl)
+    .map(item => ({ id: item.id, name: item.cardName, url: item.imageUrl! }));
+  return [...taskImages, ...MOCK_EDIT_CARD_IMAGES].filter((item, index, list) => list.findIndex(candidate => candidate.url === item.url) === index).slice(0, 3);
 };
 
 export type ChatTargetType = 'user' | 'merchant' | 'handler';
@@ -1473,6 +1519,15 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
   const [editCardImageError, setEditCardImageError] = useState<string | null>(null);
   const [editCardGeneralError, setEditCardGeneralError] = useState<string | null>(null);
   const editCardFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [auditFailureReason, setAuditFailureReason] = useState('二手卡');
+  const [auditReasonNote, setAuditReasonNote] = useState('这是一张二手卡，无法核销');
+  const [auditResult, setAuditResult] = useState('审核通过');
+  const [auditClientFailureReason, setAuditClientFailureReason] = useState('二手卡');
+  const [auditClientReasonNote, setAuditClientReasonNote] = useState('这是一张二手卡，无法核销');
+  const [auditSelectedProofIds, setAuditSelectedProofIds] = useState<string[]>([]);
+  const [auditSupplementImages, setAuditSupplementImages] = useState<Array<{ id: string; name: string; dataUrl: string }>>([]);
+  const [auditSpecialReason, setAuditSpecialReason] = useState('');
+  const auditSupplementFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // 用户成交报价联动自动计算:
   // 计算规则: 用户成交报价 = 收卡报价（1-5%）* 200，单位是奈拉 (向上取整 Math.ceil)，同时计算人民币 (保留4位小数)
@@ -1519,9 +1574,15 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
     triggerToast(`已复制全部 ${MOCK_EDIT_CARD_CODES.length} 组卡代码`);
   };
 
-  // 拆单 (Split Order) 表单交互状态 (两步流：步骤1录入，步骤2二次确认核对)
-  const [splitOrderStep, setSplitOrderStep] = useState<1 | 2>(1);
+  // 拆单流程：草稿总览 → 单条草稿录入 → 单条草稿核对 → 批次统一核对
+  const [splitOrderStep, setSplitOrderStep] = useState<0 | 1 | 2 | 3>(0);
+  const [splitDrafts, setSplitDrafts] = useState<SplitOrderDraft[]>([]);
+  const [splitEditingDraftId, setSplitEditingDraftId] = useState<string | null>(null);
+  const [isSplitBatchConfirmOpen, setIsSplitBatchConfirmOpen] = useState(false);
   const [splitSelectedImageIds, setSplitSelectedImageIds] = useState<string[]>([]);
+  const [splitSelectedPinIds, setSplitSelectedPinIds] = useState<string[]>([]);
+  const [splitSelectedExpiryIds, setSplitSelectedExpiryIds] = useState<string[]>([]);
+  const [splitSelectedReceiptIds, setSplitSelectedReceiptIds] = useState<string[]>([]);
   const [splitCardType, setSplitCardType] = useState<string>('Apple Gift Card');
   const [splitCountry, setSplitCountry] = useState<string>('US');
   const [splitMediaType, setSplitMediaType] = useState<string>('卡图');
@@ -1536,6 +1597,22 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
   const [splitNote, setSplitNote] = useState<string>('');
   const [splitGeneralError, setSplitGeneralError] = useState<string | null>(null);
   const [splitNewOrderId, setSplitNewOrderId] = useState<string>('ASPL09KW12');
+  const splitAssignedImageIds = useMemo(
+    () => new Set(splitDrafts.filter(draft => draft.id !== splitEditingDraftId).flatMap(draft => draft.selectedImageIds)),
+    [splitDrafts, splitEditingDraftId]
+  );
+  const splitAssignedPinIds = useMemo(
+    () => new Set(splitDrafts.filter(draft => draft.id !== splitEditingDraftId).flatMap(draft => draft.selectedPinIds)),
+    [splitDrafts, splitEditingDraftId]
+  );
+  const splitAssignedExpiryIds = useMemo(
+    () => new Set(splitDrafts.filter(draft => draft.id !== splitEditingDraftId).flatMap(draft => draft.selectedExpiryIds)),
+    [splitDrafts, splitEditingDraftId]
+  );
+  const splitAssignedReceiptIds = useMemo(
+    () => new Set(splitDrafts.filter(draft => draft.id !== splitEditingDraftId).flatMap(draft => draft.selectedReceiptIds)),
+    [splitDrafts, splitEditingDraftId]
+  );
 
   // 新增卡单用户成交报价联动自动计算 (与修改卡信息完全一致)
   const calculatedSplitUserDealQuote = useMemo(() => {
@@ -1569,13 +1646,16 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
     if (!cardActionModal || cardActionModal.type !== 'splitOrder') return;
     const task = cardActionModal.task;
     const origItems = getTaskCardItems(task);
+    const assignedByOtherDrafts = splitDrafts
+      .filter(draft => draft.id !== splitEditingDraftId)
+      .flatMap(draft => draft.selectedImageIds);
 
     // 1. 验证选中的卡图数量 (来源必须是原单图片中选择，至少选1张，且原单需至少保留1张)
     if (splitSelectedImageIds.length === 0) {
       setSplitGeneralError('请至少勾选 1 张原单图片凭证划入新卡单');
       return;
     }
-    if (splitSelectedImageIds.length >= origItems.length) {
+    if (assignedByOtherDrafts.length + splitSelectedImageIds.length >= origItems.length) {
       setSplitGeneralError('原卡单需至少保留 1 张卡图，不能将全部图片拆出（如需全部转出请使用转单功能）');
       return;
     }
@@ -1605,7 +1685,8 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
     setSplitQuantityError(null);
     setSplitPurchaseRateError(null);
     setSplitGeneralError(null);
-    setSplitOrderStep(2);
+    handleSaveSplitDraft();
+    triggerToast('本次拆单已保存为草稿');
   };
 
   const handleEditFaceValueChange = (val: string) => {
@@ -2085,6 +2166,170 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
     }
   }, [cardActionModal, previewImageModal]);
 
+  const handleStartNewSplitOrder = (draft?: SplitOrderDraft) => {
+    if (!cardActionModal || cardActionModal.type !== 'splitOrder') return;
+
+    const task = cardActionModal.task;
+    const items = getTaskCardItems(task);
+    const assignedImageIds = new Set(
+      splitDrafts
+        .filter(item => item.id !== draft?.id)
+        .flatMap(item => item.selectedImageIds)
+    );
+    const availableItems = items.filter(item => !assignedImageIds.has(item.id));
+    // 默认划入最后一张未占用卡图，确保原单至少保留一张卡图。
+    const initialSelected = draft?.selectedImageIds || (availableItems.length > 1 ? [availableItems[availableItems.length - 1].id] : []);
+    const initRateNum = task.merchantQuote ? parseFloat(task.merchantQuote.replace(/[^\d.]/g, '')) : 7.92;
+
+    setSplitSelectedImageIds(initialSelected);
+    setSplitSelectedPinIds(draft?.selectedPinIds || []);
+    setSplitSelectedExpiryIds(draft?.selectedExpiryIds || []);
+    setSplitSelectedReceiptIds(draft?.selectedReceiptIds || []);
+    setSplitCardType(draft?.cardType || task.cardType || 'Apple Gift Card');
+    setSplitCountry(draft?.country || task.country || 'US');
+    setSplitMediaType(draft?.mediaType || task.mediaTypeLabel || '卡图');
+    setSplitSpeed(draft?.speed || task.speedTag || '快卡');
+    setSplitFaceValue(draft?.faceValue || String(task.faceValue || 100));
+    setSplitFaceValueError(null);
+    setSplitQuantity(draft?.quantity || String(initialSelected.length || 1));
+    setSplitQuantityError(null);
+    setSplitPurchaseRate(draft?.purchaseRate || (isNaN(initRateNum) || initRateNum <= 0 ? '7.9200' : initRateNum.toFixed(4)));
+    setSplitPurchaseRateError(null);
+    setSplitShowCodesPlain({});
+    setSplitNote(draft?.note || '');
+    setSplitGeneralError(null);
+    setSplitEditingDraftId(draft?.id || null);
+    setSplitOrderStep(1);
+  };
+
+  const handleSaveSplitDraft = () => {
+    if (!cardActionModal || cardActionModal.type !== 'splitOrder') return;
+    const draft: SplitOrderDraft = {
+      id: splitEditingDraftId || `split_draft_${Date.now()}`,
+      selectedImageIds: splitSelectedImageIds,
+      selectedPinIds: splitSelectedPinIds,
+      selectedExpiryIds: splitSelectedExpiryIds,
+      selectedReceiptIds: splitSelectedReceiptIds,
+      cardType: splitCardType,
+      country: splitCountry,
+      mediaType: splitMediaType,
+      speed: splitSpeed,
+      faceValue: splitFaceValue,
+      quantity: splitQuantity,
+      purchaseRate: splitPurchaseRate,
+      note: splitNote,
+    };
+
+    setSplitDrafts(prev => splitEditingDraftId ? prev.map(item => item.id === splitEditingDraftId ? draft : item) : [...prev, draft]);
+    setSplitEditingDraftId(null);
+    setSplitOrderStep(0);
+  };
+
+  const handleDeleteSplitDraft = (draftId: string) => {
+    setSplitDrafts(prev => prev.filter(item => item.id !== draftId));
+  };
+
+  const handleConfirmSplitBatch = () => {
+    if (!cardActionModal || cardActionModal.type !== 'splitOrder' || splitDrafts.length === 0) return;
+
+    const origTask = cardActionModal.task;
+    const origItems = getTaskCardItems(origTask);
+    const origPins = getTaskPinItems(origTask);
+    const origExpiries = getTaskExpiryItems(origTask);
+    const origReceipts = getTaskReceiptItems(origTask);
+    const assignedIds = new Set(splitDrafts.flatMap(draft => draft.selectedImageIds));
+    const assignedPinIds = new Set(splitDrafts.flatMap(draft => draft.selectedPinIds));
+    const assignedExpiryIds = new Set(splitDrafts.flatMap(draft => draft.selectedExpiryIds));
+    const assignedReceiptIds = new Set(splitDrafts.flatMap(draft => draft.selectedReceiptIds));
+    const remainingCardItems = origItems.filter(item => !assignedIds.has(item.id));
+    const remainingPins = origPins.filter(item => !assignedPinIds.has(item.id));
+    const remainingExpiries = origExpiries.filter(item => !assignedExpiryIds.has(item.id));
+    const remainingReceipts = origReceipts.filter(item => !assignedReceiptIds.has(item.id));
+    if (remainingCardItems.length < 1) {
+      setSplitGeneralError('原卡单需至少保留 1 张卡图');
+      setSplitOrderStep(0);
+      return;
+    }
+
+    const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const idSeed = `${new Date().getFullYear().toString().slice(-2)}${Date.now().toString().slice(-5)}`;
+    const newSplittedTasks: CardOrderTask[] = splitDrafts.map((draft, index) => {
+      const selectedCountry = EDIT_COUNTRY_OPTIONS.find(country => country.code === draft.country);
+      const faceValue = parseFloat(draft.faceValue);
+      const purchaseRate = parseFloat(draft.purchaseRate);
+      const cardItems = origItems.filter(item => draft.selectedImageIds.includes(item.id));
+      const pinItems = origPins.filter(item => draft.selectedPinIds.includes(item.id));
+      const expiryItems = origExpiries.filter(item => draft.selectedExpiryIds.includes(item.id));
+      const receiptItems = origReceipts.filter(item => draft.selectedReceiptIds.includes(item.id));
+      const orderId = `ASPL${idSeed}${index + 1}`;
+      const userDealRate = (purchaseRate * 0.95).toFixed(4);
+
+      return {
+        id: orderId,
+        user: { ...origTask.user },
+        cardType: draft.cardType,
+        cardTypeIcon: origTask.cardTypeIcon,
+        cardFullName: `${draft.cardType} (${selectedCountry?.name || draft.country} ${draft.mediaType})`,
+        mediaTypeLabel: draft.mediaType,
+        speedTag: draft.speed,
+        cardQuantity: parseInt(draft.quantity, 10),
+        userDealQuote: `￥${userDealRate}/₦${Math.ceil(purchaseRate * 0.95 * 200)}`,
+        merchantQuote: `￥${purchaseRate.toFixed(4)}`,
+        country: draft.country,
+        countryName: selectedCountry?.name || draft.country,
+        countryFlag: selectedCountry?.flag || '🌐',
+        faceValue,
+        declaredAmount: faceValue * 0.85,
+        currency: origTask.currency || 'USD',
+        cardCheckResult: { status: 'valid', label: `官方查验有效 $${faceValue.toFixed(2)}`, realBalance: faceValue, checkTime: timeStr, provider: 'Official Card Api' },
+        riskTags: ['拆单生成', '待人工复核'],
+        isRiskAnomaly: false,
+        currentMerchant: null,
+        status: 'pending_claim',
+        statusLabel: '无商户接卡',
+        entryReason: 'normal_manual',
+        entryReasonLabel: '由原单卡券拆分生成的独立新卡单',
+        waitingDurationSeconds: 15,
+        slaRemainingSeconds: 180,
+        slaTotalSeconds: 180,
+        slaStatus: 'normal',
+        systemAdvice: '由原单拆分生成的新卡单，已自动归入【无商户接卡】列表，建议立即人工派单或撮合',
+        cardDetails: { cardCode: cardItems[0]?.code || 'SPL-CODE-9988-11', pinCode: pinItems[0]?.pin, ocrConfidence: 99, imageUrl: cardItems[0]?.imageUrl || 'DOC_PROOF_SPLIT_01', imageReflections: false },
+        cardItems,
+        pinItems,
+        expiryItems,
+        receiptItems,
+        assignedCs: origTask.assignedCs,
+        historyLogs: [{ time: timeStr, operator: '人工客服', action: `由原单 ${origTask.id} 批量拆分生成`, note: `拆分图片 ${cardItems.length} 张 | 草稿 ${index + 1} | 备注: ${draft.note || '无'}` }],
+      };
+    });
+
+    const updatedOrigTask: CardOrderTask = {
+      ...origTask,
+      cardQuantity: remainingCardItems.length,
+      cardItems: remainingCardItems,
+      pinItems: remainingPins,
+      expiryItems: remainingExpiries,
+      receiptItems: remainingReceipts,
+      historyLogs: [{ time: timeStr, operator: '人工客服', action: `批量拆单提交：生成 ${newSplittedTasks.length} 张新卡单`, note: `原单剩余卡图 ${remainingCardItems.length} 张` }, ...origTask.historyLogs],
+    };
+
+    setOrderTasks(prev => [
+      ...newSplittedTasks,
+      ...prev.map(task => task.id === origTask.id ? updatedOrigTask : task),
+    ]);
+    triggerToast(`拆单批次已生效：已生成 ${newSplittedTasks.length} 张新卡单`);
+    handleCloseCardActionModal();
+  };
+
+  const handleAuditSupplementFiles = (files: FileList | File[]) => {
+    Array.from(files).filter(file => file.type === 'image/png' || file.type === 'image/jpeg').slice(0, 12 - auditSupplementImages.length).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => setAuditSupplementImages(prev => [...prev, { id: `audit-proof-${Date.now()}-${file.name}`, name: file.name, dataUrl: String(reader.result) }]);
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleOpenCardActionModal = (type: CardActionModalType, task: CardOrderTask) => {
     setActiveDropdownOrderId(null);
     if (type === 'dispatch') {
@@ -2104,6 +2349,15 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
       setManualDelayImages([]);
       setManualDelayError(null);
       setManualDelayImageError(null);
+    } else if (type === 'auditFailed') {
+      setAuditFailureReason('二手卡');
+      setAuditReasonNote('这是一张二手卡，无法核销');
+      setAuditResult('审核通过');
+      setAuditClientFailureReason('二手卡');
+      setAuditClientReasonNote('');
+      setAuditSelectedProofIds(getTaskAuditProofImages(task).map(image => image.id));
+      setAuditSupplementImages([]);
+      setAuditSpecialReason('');
     } else if (type === 'directProcess') {
       setDirectProcessStep(1);
       setDirectProcessResult('success');
@@ -2151,32 +2405,21 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
       setEditCardImageError(null);
       setEditCardGeneralError(null);
     } else if (type === 'splitOrder') {
-      const items = getTaskCardItems(task);
-      setSplitOrderStep(1);
-      // 默认选中最后 1 张卡图划入新单（保证原单至少留 1 张，新单至少有 1 张）
-      const initialSelected = items.length > 1 ? [items[items.length - 1].id] : (items.length === 1 ? [items[0].id] : []);
-      setSplitSelectedImageIds(initialSelected);
-      setSplitCardType(task.cardType || 'Apple Gift Card');
-      setSplitCountry(task.country || 'US');
-      setSplitMediaType(task.mediaTypeLabel || '卡图');
-      setSplitSpeed(task.speedTag || '快卡');
-      setSplitFaceValue(String(task.faceValue || 100));
-      setSplitFaceValueError(null);
-      setSplitQuantity(String(initialSelected.length || 1));
-      setSplitQuantityError(null);
-      const initRateNum = task.merchantQuote ? parseFloat(task.merchantQuote.replace(/[^\d.]/g, '')) : 7.92;
-      setSplitPurchaseRate(isNaN(initRateNum) || initRateNum <= 0 ? '7.9200' : initRateNum.toFixed(4));
-      setSplitPurchaseRateError(null);
-      setSplitShowCodesPlain({});
-      setSplitNote('');
+      setSplitOrderStep(0);
       setSplitGeneralError(null);
-      const randNum = Math.floor(1000 + Math.random() * 9000);
-      setSplitNewOrderId(`ASPL${new Date().getFullYear().toString().slice(-2)}${randNum}`);
+      setSplitDrafts([]);
+      setSplitEditingDraftId(null);
+      setIsSplitBatchConfirmOpen(false);
     }
     setCardActionModal({ type, task });
   };
 
   const handleCloseCardActionModal = () => {
+    if (cardActionModal?.type === 'splitOrder') {
+      setSplitDrafts([]);
+      setSplitEditingDraftId(null);
+      setIsSplitBatchConfirmOpen(false);
+    }
     setCardActionModal(null);
   };
 
@@ -2191,7 +2434,23 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
   const handleConfirmCardAction = () => {
     if (!cardActionModal) return;
 
-    if (cardActionModal.type === 'dispatch') {
+    if (cardActionModal.type === 'auditFailed') {
+      if ((auditResult === '撤回重新处理' || auditResult === '强制处理成功') && !auditSpecialReason.trim()) {
+        triggerToast('请填写原因');
+        return;
+      }
+      const resultConfig = auditResult === '撤回重新处理'
+        ? { status: 'manual_recalled_pending' as const, statusLabel: '已撤回·待处理', action: '审核确认撤回重新处理' }
+        : { status: 'completed' as const, statusLabel: '处理成功', action: auditResult === '强制处理成功' ? '审核确认强制处理成功，已立即放款' : '审核通过，商户处理失败结果已确认，卡单闭环' };
+      setOrderTasks(prev => prev.map(task => task.id === cardActionModal.task.id ? {
+        ...task,
+        status: resultConfig.status,
+        statusLabel: resultConfig.statusLabel,
+        historyLogs: [{ time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), operator: '当前客服', action: resultConfig.action, note: auditSpecialReason.trim() || `${auditFailureReason}${auditReasonNote ? `：${auditReasonNote}` : ''}` }, ...task.historyLogs],
+      } : task));
+      triggerToast(auditResult === '撤回重新处理' ? `卡单 ${cardActionModal.task.id} 已撤回至待处理列表` : `卡单 ${cardActionModal.task.id} 已处理完成`);
+      handleCloseCardActionModal();
+    } else if (cardActionModal.type === 'dispatch') {
       const selectedMerchant = DISPATCH_MERCHANT_LIST.find(m => m.id === dispatchMerchantId);
       if (!selectedMerchant || !selectedMerchant.isNormal) {
         triggerToast('请选择正常可接卡的商户');
@@ -2447,6 +2706,11 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
         handleCloseCardActionModal();
       }
     } else if (cardActionModal.type === 'splitOrder') {
+      // 单条拆单确认仅保存为本弹窗内草稿，最终由批次统一提交生效。
+      handleSaveSplitDraft();
+      triggerToast('本次拆单已保存为草稿，可继续新建卡单或统一提交生效');
+      return;
+
       // 最终提交生效：
       // 1. 校验面额
       const parsedFaceValue = parseFloat(splitFaceValue);
@@ -2472,7 +2736,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
         return;
       }
 
-      const origTask = cardActionModal.task;
+      const origTask = cardActionModal!.task;
       const origItems = getTaskCardItems(origTask);
 
       // 划分卡图：被选中的图片划入新卡单，剩余的图片留在原卡单
@@ -2545,23 +2809,24 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
       };
 
       // 更新原卡单：扣除拆出的卡图，更新剩余卡数量及历史日志
+      const updatedOrigTask: CardOrderTask = {
+        ...origTask,
+        cardQuantity: Math.max(1, remainingCardItems.length),
+        cardItems: remainingCardItems,
+        historyLogs: [
+          {
+            time: timeStr,
+            operator: '人工客服',
+            action: `拆单操作：划出 ${newCardItems.length} 张卡图至新卡单 ${splitNewOrderId}`,
+            note: `原单剩余卡图 ${remainingCardItems.length} 张${splitNote ? ` | 备注: ${splitNote}` : ''}`,
+          },
+          ...origTask.historyLogs,
+        ],
+      };
       setOrderTasks(prev => {
         const updatedPrev = prev.map(task => {
           if (task.id === origTask.id) {
-            return {
-              ...task,
-              cardQuantity: Math.max(1, remainingCardItems.length),
-              cardItems: remainingCardItems,
-              historyLogs: [
-                {
-                  time: timeStr,
-                  operator: '人工客服',
-                  action: `拆单操作：划出 ${newCardItems.length} 张卡图至新卡单 ${splitNewOrderId}`,
-                  note: `原单剩余卡图 ${remainingCardItems.length} 张${splitNote ? ` | 备注: ${splitNote}` : ''}`,
-                },
-                ...task.historyLogs,
-              ],
-            };
+            return updatedOrigTask;
           }
           return task;
         });
@@ -2570,7 +2835,8 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
       });
 
       triggerToast(`成功拆单！新卡单 [${splitNewOrderId}] 已生成并默认归属到【无商户接卡】列表中。`);
-      handleCloseCardActionModal();
+      setCardActionModal({ type: 'splitOrder', task: updatedOrigTask });
+      setSplitOrderStep(3);
     } else if (cardActionModal.type === 'editCard') {
       // 1. 校验面额
       const parsedFaceValue = parseFloat(editFaceValue);
@@ -2985,6 +3251,8 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
         imageUrl: 'DOC_PROOF_SHA256_88915',
         imageReflections: false,
       },
+      pinItems: MOCK_EDIT_CARD_PINS.slice(0, 2),
+      receiptItems: MOCK_EDIT_CARD_RECEIPTS.slice(0, 1),
       historyLogs: [
         { time: '14:25:00', operator: '商户极客卡业', action: '接单' },
         { time: '14:33:10', operator: '商户极客卡业', action: '提交异常：卡密显示已被其他账户兑换' },
@@ -3250,6 +3518,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
       riskTags: ['核销失败', '审核流转'],
       isRiskAnomaly: true,
       currentMerchant: { id: 'M-1008', name: '万通鼎盛数码', rate: '96.2%' },
+      assignedCs: { id: 'cs_qq', name: '青青', email: '989898@163.com', label: '青青(989898@163.com)' },
       status: 'failed_pending_audit',
       statusLabel: '失败待审核',
       entryReason: 'auto_failed',
@@ -3268,6 +3537,43 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
       historyLogs: [
         { time: '14:18:00', operator: '商户万通', action: '核销失败并提交失败证明' },
         { time: '14:20:00', operator: '系统', action: '自动流转至【失败待审核】节点' },
+      ],
+    },
+    {
+      id: 'AFLT5588US',
+      user: { userId: 'US92TGC58', name: 'CardPilot', level: 'V4', creditScore: 91, phoneOrEmail: '+1 646***8192' },
+      cardType: 'Google Play Gift Card',
+      cardTypeIcon: 'google',
+      cardFullName: '谷歌/Google Play',
+      mediaTypeLabel: '卡图',
+      speedTag: '普通卡',
+      cardQuantity: 2,
+      userDealQuote: '￥6.5800/₦1300',
+      merchantQuote: '￥7.3500',
+      country: 'US',
+      countryName: '美国',
+      countryFlag: '🇺🇸',
+      faceValue: 100,
+      declaredAmount: 78.8,
+      currency: 'USD',
+      cardCheckResult: { status: 'redeemed', label: '卡密已被赎回', realBalance: 0, checkTime: '14:36:00', provider: 'Google Play API' },
+      riskTags: ['核销失败', '非当前客服'],
+      isRiskAnomaly: true,
+      currentMerchant: { id: 'M-1012', name: '招财卡券', rate: '97.1%' },
+      assignedCs: { id: 'cs_dff', name: '大飞飞', email: '3456@163.com', label: '大飞飞(3456@163.com)' },
+      status: 'failed_pending_audit',
+      statusLabel: '失败待审核',
+      entryReason: 'auto_failed',
+      entryReasonLabel: '商户核销失败，已分配给其他客服复核',
+      waitingDurationSeconds: 185,
+      slaRemainingSeconds: 75,
+      slaTotalSeconds: 260,
+      slaStatus: 'warning',
+      systemAdvice: '该卡单已分配给大飞飞跟进，当前客服仅可查看详情或同步用户信息',
+      cardDetails: { cardCode: 'GP-US-5588-9921-1140', ocrConfidence: 98.6, imageUrl: 'DOC_PROOF_SHA256_88923', imageReflections: false },
+      historyLogs: [
+        { time: '14:32:00', operator: '商户招财', action: '核销失败并提交赎回记录' },
+        { time: '14:34:00', operator: '系统', action: '自动流转至【失败待审核】节点并分配给大飞飞' },
       ],
     },
     {
@@ -3576,6 +3882,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
       .filter(task => {
         // Tab 过滤
         if (orderFilterTab === 'pending_claim') return task.status === 'pending_claim';
+        if (orderFilterTab === 'failed_pending_audit') return task.status === 'failed_pending_audit' && isAssignedToCurrentCustomerService(task);
         if (orderFilterTab === 'merchant_reported_anomaly') return task.status === 'merchant_reported_anomaly';
         if (orderFilterTab === 'manual_recalled_pending') return task.status === 'manual_recalled_pending';
         // 全部待处理: 卡单状态仅为 无商户接卡、商户提交异常、已撤回·待处理，其他状态不能出现在全部待处理中
@@ -4029,16 +4336,40 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                 全部待处理 ({orderTasks.filter(o => o.status === 'pending_claim' || o.status === 'merchant_reported_anomaly' || o.status === 'manual_recalled_pending').length})
               </button>
 
-              {/* 2. 无商户接卡 */}
+              {/* 2. 失败待审核 */}
               <button
-                onClick={() => setOrderFilterTab('pending_claim')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  orderFilterTab === 'pending_claim'
-                    ? 'bg-blue-600 text-white shadow-2xs font-bold'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200/80'
+                onClick={() => setOrderFilterTab('failed_pending_audit')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  orderFilterTab === 'failed_pending_audit'
+                    ? 'bg-rose-600 text-white shadow-2xs font-bold'
+                    : 'bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100'
                 }`}
               >
-                无商户接卡 ({orderTasks.filter(o => o.status === 'pending_claim').length})
+                <span className="material-symbols-outlined text-[14px]">fact_check</span>
+                <span>失败待审核</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  orderFilterTab === 'failed_pending_audit' ? 'bg-white text-rose-700' : 'bg-rose-200 text-rose-900'
+                }`}>
+                  {orderTasks.filter(o => o.status === 'failed_pending_audit' && isAssignedToCurrentCustomerService(o)).length}
+                </span>
+              </button>
+
+              {/* 3. 无商户接卡 */}
+              <button
+                onClick={() => setOrderFilterTab('pending_claim')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  orderFilterTab === 'pending_claim'
+                    ? 'bg-blue-600 text-white shadow-2xs font-bold'
+                    : 'bg-blue-50 text-blue-800 border border-blue-200 hover:bg-blue-100'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[14px]">storefront</span>
+                <span>无商户接卡</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  orderFilterTab === 'pending_claim' ? 'bg-white text-blue-700' : 'bg-blue-200 text-blue-900'
+                }`}>
+                  {orderTasks.filter(o => o.status === 'pending_claim').length}
+                </span>
               </button>
 
               {/* 3. 商户提交异常 */}
@@ -4164,6 +4495,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                                     { id: 'AAPP08GW7Z', label: '待商户处理' },
                                     { id: 'AAPP9901US', label: '售后中' },
                                     { id: 'AFLT4411US', label: '失败待审核' },
+                                    { id: 'AFLT5588US', label: '失败待审核（其他客服）' },
                                     { id: 'ASUC8899US', label: '处理成功' },
                                     { id: 'AFLS7722US', label: '处理失败' },
                                   ].map(sample => (
@@ -4603,6 +4935,14 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                                               <span className="material-symbols-outlined text-[15px] text-emerald-500">sync</span>
                                               <span>同步用户信息</span>
                                             </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenCardActionModal('transfer', task)}
+                                              className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-amber-50 hover:text-amber-700 flex items-center gap-1.5 cursor-pointer transition-colors"
+                                            >
+                                              <span className="material-symbols-outlined text-[15px] text-amber-500">swap_horiz</span>
+                                              <span>转单</span>
+                                            </button>
                                             {getTaskCardItems(task).length >= 2 && (
                                               <button
                                                 type="button"
@@ -4613,14 +4953,6 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                                                 <span>拆单</span>
                                               </button>
                                             )}
-                                            <button
-                                              type="button"
-                                              onClick={() => handleOpenCardActionModal('transfer', task)}
-                                              className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-amber-50 hover:text-amber-700 flex items-center gap-1.5 cursor-pointer transition-colors"
-                                            >
-                                              <span className="material-symbols-outlined text-[15px] text-amber-500">swap_horiz</span>
-                                              <span>转单</span>
-                                            </button>
                                           </div>
                                         </div>
                                       )}
@@ -4753,10 +5085,24 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                                 </>
                               )}
 
-                              {/* 5. 售后中 或 失败待审核 */}
-                              {(task.status === 'after_sale' || task.status === 'failed_pending_audit') && (
+                              {/* 5. 失败待审核：审核置顶，转单与详情位于第二行 */}
+                              {task.status === 'failed_pending_audit' && (
+                                isAssignedToCurrentCustomerService(task) ? (
+                                  <>
+                                    <div className="w-full h-[26px]"><button type="button" onClick={() => handleOpenCardActionModal('auditFailed', task)} className="w-full h-full rounded bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer transition-colors flex items-center justify-center whitespace-nowrap">立即审核</button></div>
+                                    <div className="grid grid-cols-2 gap-1 w-full h-[26px]"><div className="relative w-full h-full"><button type="button" onClick={(e) => { e.stopPropagation(); setActiveDropdownOrderId(activeDropdownOrderId === task.id ? null : task.id); }} className={`w-full h-full rounded border text-xs font-medium cursor-pointer transition-colors flex items-center justify-center whitespace-nowrap ${isDropdownOpen ? 'bg-blue-50 text-blue-700 border-blue-300 font-semibold shadow-2xs' : 'border-slate-300 hover:bg-slate-100 bg-white text-slate-700'}`}>更多 ▾</button>{isDropdownOpen && <div className={`absolute left-0 ${isNearBottom ? 'bottom-full mb-1' : 'top-full mt-1'} w-36 bg-white rounded-lg shadow-xl border border-slate-200 py-1 z-30 text-left animate-in fade-in zoom-in-95 duration-100`} onClick={e => e.stopPropagation()}><button type="button" onClick={() => handleOpenCardActionModal('syncUser', task)} className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-1.5 cursor-pointer"><MaterialIcon name="sync" size={15} className="text-emerald-500" />同步用户信息</button><button type="button" onClick={() => handleOpenCardActionModal('transfer', task)} className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-amber-50 hover:text-amber-700 flex items-center gap-1.5 cursor-pointer"><MaterialIcon name="swap_horiz" size={15} className="text-amber-500" />转单</button></div>}</div><button type="button" onClick={() => handleOpenProcessOrder(task)} className="w-full h-full rounded border border-slate-300 hover:bg-slate-100 bg-white text-slate-700 text-xs font-medium cursor-pointer transition-colors flex items-center justify-center whitespace-nowrap">详情</button></div>
+                                  </>
+                                ) : (
+                                  <><div className="w-full h-[26px]"><button type="button" onClick={() => handleOpenCardActionModal('syncUser', task)} className="w-full h-full rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium cursor-pointer transition-colors flex items-center justify-center whitespace-nowrap">同步用户信息</button></div><div className="w-full h-[26px]"><button type="button" onClick={() => handleOpenProcessOrder(task)} className="w-full h-full rounded border border-slate-300 hover:bg-slate-100 bg-white text-slate-700 text-xs font-medium cursor-pointer transition-colors flex items-center justify-center whitespace-nowrap">详情</button></div></>
+                                )
+                              )}
+
+                              {/* 6. 售后中 */}
+                              {task.status === 'after_sale' && (
                                 <div className="grid grid-cols-2 gap-1 w-full h-[26px]">
                                   <div className="relative w-full h-full">
+                                    <>
+                                      <>
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -4797,6 +5143,8 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                                           </div>
                                         </div>
                                       )}
+                                      </>
+                                    </>
                                     </div>
                                     <button
                                       type="button"
@@ -6280,7 +6628,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
         >
           <div
             className={`bg-white rounded-2xl shadow-2xl border border-slate-200 w-full ${
-              cardActionModal.type === 'editCard' || cardActionModal.type === 'splitOrder'
+              cardActionModal.type === 'editCard' || cardActionModal.type === 'auditFailed' || cardActionModal.type === 'splitOrder'
                 ? 'max-w-3xl'
                 : cardActionModal.type === 'syncUser' || cardActionModal.type === 'directProcess'
                 ? 'max-w-2xl'
@@ -6326,9 +6674,13 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                           : '直接处理'
                         : cardActionModal.type === 'editCard'
                         ? '修改卡信息'
+                        : cardActionModal.type === 'auditFailed'
+                        ? '立即审核'
                         : cardActionModal.type === 'splitOrder'
                         ? splitOrderStep === 2
                           ? '确认拆单提交生效吗？'
+                          : splitOrderStep === 3
+                          ? '统一提交拆单'
                           : '卡单拆单处理'
                         : cardActionModal.type === 'recall'
                         ? '撤回卡单'
@@ -6337,7 +6689,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                         : `${(CARD_ACTION_MODAL_CONFIG as Record<string, any>)[(cardActionModal as any).type]?.title || '操作'}弹窗`}
                     </span>
                     {/* 人工派单、修改卡信息、转单、同步用户信息、直接处理、撤回卡单及手动延迟在标题右侧高亮展示卡单ID并提供一键复制 */}
-                    {cardActionModal.type === 'dispatch' || cardActionModal.type === 'transfer' || cardActionModal.type === 'syncUser' || cardActionModal.type === 'directProcess' || cardActionModal.type === 'editCard' || cardActionModal.type === 'splitOrder' || cardActionModal.type === 'recall' || cardActionModal.type === 'manualDelay' ? (
+                    {cardActionModal.type === 'dispatch' || cardActionModal.type === 'transfer' || cardActionModal.type === 'syncUser' || cardActionModal.type === 'directProcess' || cardActionModal.type === 'editCard' || cardActionModal.type === 'auditFailed' || cardActionModal.type === 'splitOrder' || cardActionModal.type === 'recall' || cardActionModal.type === 'manualDelay' ? (
                       <button
                         type="button"
                         onClick={() => {
@@ -6363,20 +6715,26 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                       </span>
                     )}
                   </div>
-                  <span className={`text-[11px] text-slate-400 mt-0.5 ${cardActionModal.type === 'dispatch' || cardActionModal.type === 'transfer' || cardActionModal.type === 'syncUser' || cardActionModal.type === 'directProcess' || cardActionModal.type === 'editCard' || cardActionModal.type === 'splitOrder' || cardActionModal.type === 'recall' || cardActionModal.type === 'manualDelay' ? 'font-sans' : 'font-mono'}`}>
+                  <span className={`text-[11px] text-slate-400 mt-0.5 ${cardActionModal.type === 'dispatch' || cardActionModal.type === 'transfer' || cardActionModal.type === 'syncUser' || cardActionModal.type === 'directProcess' || cardActionModal.type === 'editCard' || cardActionModal.type === 'auditFailed' || cardActionModal.type === 'splitOrder' || cardActionModal.type === 'recall' || cardActionModal.type === 'manualDelay' ? 'font-sans' : 'font-mono'}`}>
                     {cardActionModal.type === 'dispatch'
                       ? '为该卡单指定或改派具体的接卡商户及客服'
                       : cardActionModal.type === 'transfer'
                       ? '为该卡单流转指派新的在线接收客服处理'
                       : cardActionModal.type === 'syncUser'
                       ? '向用户澄清说明该卡单的相关异常信息与举证记录，便于用户实时知晓'
+                      : cardActionModal.type === 'auditFailed'
+                      ? '审核失败待审核卡单'
                       : cardActionModal.type === 'editCard'
                       ? editCardStep === 2
                         ? '请仔细核对卡单信息修改对比项，有变更的项目已高亮显示，确认无误后点击提交生效'
                         : '修改卡单规格、报价及参数信息，并向用户补充变更说明'
                       : cardActionModal.type === 'splitOrder'
-                      ? splitOrderStep === 2
+                      ? splitOrderStep === 0
+                        ? '核对原单信息后，可从剩余卡图凭证中创建新卡单'
+                        : splitOrderStep === 2
                         ? '请核对原卡单与新建卡单信息及卡图划入情况，确认无误后提交生效（新卡单默认归属无商户接卡池）'
+                        : splitOrderStep === 3
+                        ? '请核对原单剩余卡图和全部新卡单草稿，确认后统一生效'
                         : '勾选原卡单图片凭证划入新卡单，并录入新卡单规格与报价信息'
                       : cardActionModal.type === 'directProcess'
                       ? directProcessStep === 1
@@ -7470,7 +7828,69 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                 </div>
               )
             ) : cardActionModal.type === 'splitOrder' ? (
-              splitOrderStep === 1 ? (
+              splitOrderStep === 0 ? (
+                <div className="p-6 flex-1 min-h-0 flex flex-col gap-4 text-xs overflow-y-auto overscroll-contain pr-3">
+                  <div className="flex flex-col gap-2 bg-slate-50/90 rounded-xl p-3.5 border border-slate-200/90 shadow-2xs">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
+                      <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                        <MaterialIcon name="receipt" size={16} className="text-blue-600" />
+                        <span>模块一：原卡单信息对照</span>
+                      </span>
+                      <div className="flex items-center gap-2"><span className="text-[11px] text-slate-400 font-mono">原单号: {cardActionModal.task.id}</span><span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">当前状态: {cardActionModal.task.statusLabel}</span></div>
+                    </div>
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <CardBrandLogo card={{ brandName: cardActionModal.task.cardType, iconType: cardActionModal.task.cardTypeIcon }} size="xs" />
+                        <div className="flex flex-col min-w-0"><span className="font-bold text-slate-900 text-xs truncate">{cardActionModal.task.cardFullName || cardActionModal.task.cardType}</span><div className="flex items-center gap-1.5 mt-1 flex-wrap"><span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-medium leading-none">{cardActionModal.task.country}{cardActionModal.task.countryName}</span><span className="text-[10px] px-2 py-0.5 rounded bg-blue-100/70 text-blue-700 font-medium leading-none">{cardActionModal.task.mediaTypeLabel || '卡图'}</span><span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100/70 text-emerald-700 font-medium leading-none">{cardActionModal.task.speedTag || '快卡'}</span></div></div>
+                      </div>
+                      <div className="text-right shrink-0"><div className="font-mono text-slate-900 text-xs font-semibold flex items-center justify-end gap-3"><span>面值: {cardActionModal.task.faceValue}</span><span>原单卡图总数: {getTaskCardItems(cardActionModal.task).length}张</span></div><div className="text-[11px] font-mono mt-1 text-slate-600 flex items-center justify-end gap-2"><span>用户成交报价: <strong className="text-emerald-700 font-semibold">{cardActionModal.task.userDealQuote || '￥6.8500/₦1350'}</strong></span><span className="text-slate-300">|</span><span>收卡报价: <strong className="text-blue-700 font-semibold">{cardActionModal.task.merchantQuote ? cardActionModal.task.merchantQuote.replace('￥', '') : '7.9200'}</strong></span></div></div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5"><span className="block text-[10px] text-slate-500">原单卡图总数</span><span className="font-mono font-bold text-slate-900">{getTaskCardItems(cardActionModal.task).length} 张</span></div>
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5"><span className="block text-[10px] text-amber-700">已分配至草稿</span><span className="font-mono font-bold text-amber-800">{splitDrafts.reduce((total, draft) => total + draft.selectedImageIds.length, 0)} 张</span></div>
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5"><span className="block text-[10px] text-blue-700">原单剩余</span><span className="font-mono font-bold text-blue-800">{getTaskCardItems(cardActionModal.task).length - splitDrafts.reduce((total, draft) => total + draft.selectedImageIds.length, 0)} 张</span></div>
+                  </div>
+                  <div className="flex flex-col gap-2.5 bg-white rounded-xl p-3.5 border border-slate-200 shadow-2xs">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                      <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5"><MaterialIcon name="playlist_add" size={16} className="text-blue-600" /><span>待提交生效新单（提交生效后请至“无商户接卡”中查看）</span></span>
+                      <div className="flex items-center gap-3"><span className="text-[11px] text-slate-400">{splitDrafts.length} 条</span><button type="button" onClick={() => handleStartNewSplitOrder()} disabled={getTaskCardItems(cardActionModal.task).length - splitDrafts.reduce((total, draft) => total + draft.selectedImageIds.length, 0) <= 1} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-semibold cursor-pointer transition-colors"><MaterialIcon name="add" size={14} /><span>新建卡单</span></button></div>
+                    </div>
+                    {splitDrafts.length === 0 ? (
+                      <div className="py-5 text-center text-[11px] text-slate-400">暂无草稿，请新建卡单</div>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        {splitDrafts.map(draft => {
+                          const selectedCountry = EDIT_COUNTRY_OPTIONS.find(country => country.code === draft.country);
+                          const relatedCardItems = getTaskCardItems(cardActionModal.task).filter(item => draft.selectedImageIds.includes(item.id));
+                          const relatedPins = getTaskPinItems(cardActionModal.task).filter(item => draft.selectedPinIds.includes(item.id));
+                          const relatedExpiries = getTaskExpiryItems(cardActionModal.task).filter(item => draft.selectedExpiryIds.includes(item.id));
+                          const relatedReceipts = getTaskReceiptItems(cardActionModal.task).filter(item => draft.selectedReceiptIds.includes(item.id));
+                          const purchaseRate = parseFloat(draft.purchaseRate) || 0;
+                          const userDealQuote = `￥${(purchaseRate * 0.95).toFixed(4)}/₦${Math.ceil(purchaseRate * 0.95 * 200)}`;
+
+                          return (
+                            <div key={draft.id} className="flex flex-col gap-3 rounded-xl border border-slate-200/90 bg-slate-50/90 p-3.5 shadow-2xs">
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <CardBrandLogo card={{ brandName: draft.cardType, iconType: cardActionModal.task.cardTypeIcon }} size="xs" />
+                                  <div className="flex flex-col min-w-0"><span className="font-bold text-slate-900 text-xs truncate">{draft.cardType}</span><div className="flex items-center gap-1.5 mt-1 flex-wrap"><span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-medium leading-none">{draft.country}{selectedCountry?.name || ''}</span><span className="text-[10px] px-2 py-0.5 rounded bg-blue-100/70 text-blue-700 font-medium leading-none">{draft.mediaType}</span><span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100/70 text-emerald-700 font-medium leading-none">{draft.speed}</span></div></div>
+                                </div>
+                                <div className="text-right shrink-0"><div className="font-mono text-slate-900 text-xs font-semibold flex items-center justify-end gap-3"><span>面值: {draft.faceValue}</span><span>卡图总数: {relatedCardItems.length}张</span></div><div className="text-[11px] font-mono mt-1 text-slate-600 flex items-center justify-end gap-2"><span>用户成交报价: <strong className="text-emerald-700 font-semibold">{userDealQuote}</strong></span><span className="text-slate-300">|</span><span>收卡报价: <strong className="text-blue-700 font-semibold">{draft.purchaseRate}</strong></span></div></div>
+                              </div>
+                              <div className="flex items-center justify-between gap-3"><span className="text-[11px] font-medium text-slate-600">卡图卡密凭证：</span><div className="flex gap-2 shrink-0"><button type="button" onClick={() => handleStartNewSplitOrder(draft)} className="text-xs text-blue-700 hover:text-blue-900 font-medium cursor-pointer">编辑</button><button type="button" onClick={() => handleDeleteSplitDraft(draft.id)} className="text-xs text-rose-600 hover:text-rose-800 font-medium cursor-pointer">删除</button></div></div>
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                {relatedCardItems.map((item, imageIndex) => <button key={item.id} type="button" onClick={() => item.imageUrl && setPreviewImageModal({ url: item.imageUrl, title: `${item.cardName} · 卡图卡密凭证` })} disabled={!item.imageUrl} className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-200 bg-white p-2.5 text-left transition-colors hover:border-blue-300 disabled:cursor-default"><div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-300 bg-slate-100">{item.imageUrl ? <img src={item.imageUrl} alt={item.cardName} className="h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center text-slate-400"><MaterialIcon name="image" size={22} /></span>}<span className="absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/65 font-mono text-[10px] font-bold text-white">{imageIndex + 1}</span></div><div className="min-w-0"><div className="truncate text-base font-bold text-slate-900">{item.cardName}</div><div className="mt-0.5 truncate font-mono text-xs text-slate-500">{item.code || '卡密提取失败'}</div></div></button>)}
+                              </div>
+                              {(relatedPins.length > 0 || relatedExpiries.length > 0 || relatedReceipts.length > 0) && <div className="grid grid-cols-1 gap-2 border-t border-slate-200 pt-3 sm:grid-cols-3"><div className="rounded-lg bg-white px-3 py-2"><span className="text-[10px] font-medium text-slate-500">PIN 码</span><div className="mt-1 flex flex-wrap gap-1">{relatedPins.map(item => <span key={item.id} className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-indigo-800">{item.pin}</span>)}</div></div><div className="rounded-lg bg-white px-3 py-2"><span className="text-[10px] font-medium text-slate-500">有效期</span><div className="mt-1 flex flex-wrap gap-1">{relatedExpiries.map(item => <span key={item.id} className="rounded bg-cyan-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-cyan-800">{item.expiryDate}</span>)}</div></div><div className="rounded-lg bg-white px-3 py-2"><span className="text-[10px] font-medium text-slate-500">收据凭证</span><div className="mt-1 flex gap-1">{relatedReceipts.map((item, index) => <button key={item.id} type="button" onClick={() => setPreviewImageModal({ url: item.imageUrl, title: item.name })} className="relative h-7 w-7 overflow-hidden rounded border border-slate-200"><img src={item.imageUrl} alt={item.name} className="h-full w-full object-cover" /><span className="absolute inset-0 flex items-center justify-center bg-black/25 text-[9px] font-bold text-white">{index + 1}</span></button>)}</div></div></div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : splitOrderStep === 1 ? (
                 /* 拆单步骤 1: 录入新卡单信息及勾选原单卡图凭证 */
                 <div className="p-6 flex-1 min-h-0 max-h-[calc(90vh-130px)] flex flex-col gap-4 text-xs overflow-y-auto overscroll-contain pr-3">
                   {splitGeneralError && (
@@ -7487,7 +7907,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                         <MaterialIcon name="info" size={16} className="text-blue-600" />
                         <span>模块一：原卡单信息对照</span>
                       </span>
-                      <span className="text-[11px] text-slate-400 font-mono">原单号: {cardActionModal.task.id}</span>
+                      <div className="flex items-center gap-2"><span className="text-[11px] text-slate-400 font-mono">原单号: {cardActionModal.task.id}</span><span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">当前状态: {cardActionModal.task.statusLabel}</span></div>
                     </div>
                     <div className="flex items-center justify-between pt-1">
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -7514,29 +7934,31 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                           <span>面值: {cardActionModal.task.faceValue}</span>
                           <span>原单卡图总数: {getTaskCardItems(cardActionModal.task).length}张</span>
                         </div>
-                        <div className="text-[11px] font-mono mt-1 text-slate-600">
-                          <span>收卡报价: <strong className="text-blue-700 font-semibold">{cardActionModal.task.merchantQuote || '￥7.9200'}</strong></span>
+                        <div className="text-[11px] font-mono mt-1 text-slate-600 flex items-center justify-end gap-2">
+                          <span>用户成交报价: <strong className="text-emerald-700 font-semibold">{cardActionModal.task.userDealQuote || '￥6.8500/₦1350'}</strong></span>
+                          <span className="text-slate-300">|</span>
+                          <span>收卡报价: <strong className="text-blue-700 font-semibold">{cardActionModal.task.merchantQuote ? cardActionModal.task.merchantQuote.replace('￥', '') : '7.9200'}</strong></span>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* 模块二：选择拆分卡图来源 (必须从原单图片中选择，至少选1张，原单必须保留1张) */}
+                  {/* 模块二：选择拆分凭证 */}
                   <div className="flex flex-col gap-3 bg-white rounded-xl p-3.5 border border-slate-200 shadow-2xs">
                     <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                       <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
                         <MaterialIcon name="photo_library" size={16} className="text-amber-600" />
-                        <span>模块二：选择拆分卡图凭证（来源必须是原单图片中选择）</span>
+                        <span>模块二：选择拆分凭证</span>
                       </span>
                       <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-medium">
-                        已选划入新单: {splitSelectedImageIds.length} 张 / 原单总计: {getTaskCardItems(cardActionModal.task).length} 张
+                        卡图卡密已选: {splitSelectedImageIds.length} 张
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-500 leading-relaxed">
-                      请勾选需要划入新卡单的卡图凭证。原卡单必须至少保留 1 张卡图。
+                      卡图卡密为必选项，原卡单至少保留 1 张；PIN 码、有效期和收据凭证均为选填项。
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
-                      {getTaskCardItems(cardActionModal.task).map((item, idx) => {
+                      {getTaskCardItems(cardActionModal.task).filter(item => !splitAssignedImageIds.has(item.id)).map((item, idx) => {
                         const isSelected = splitSelectedImageIds.includes(item.id);
                         return (
                           <div
@@ -7550,7 +7972,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                                 setSplitSelectedImageIds(prev => prev.filter(id => id !== item.id));
                                 setSplitQuantity(String(splitSelectedImageIds.length - 1));
                               } else {
-                                if (splitSelectedImageIds.length >= getTaskCardItems(cardActionModal.task).length - 1) {
+                                if (splitSelectedImageIds.length >= getTaskCardItems(cardActionModal.task).length - splitAssignedImageIds.size - 1) {
                                   setSplitGeneralError('原卡单需至少保留 1 张卡图');
                                   return;
                                 }
@@ -7588,6 +8010,11 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                         );
                       })}
                     </div>
+                    {(getTaskPinItems(cardActionModal.task).length > 0 || getTaskExpiryItems(cardActionModal.task).length > 0 || getTaskReceiptItems(cardActionModal.task).length > 0) && <div className="grid grid-cols-1 gap-2.5 border-t border-slate-100 pt-3 sm:grid-cols-3">
+                      {getTaskPinItems(cardActionModal.task).length > 0 && <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-2.5"><div className="mb-2 flex items-center justify-between"><span className="flex items-center gap-1 text-[11px] font-bold text-indigo-900"><MaterialIcon name="pin" size={14} />PIN 码</span><span className="text-[10px] text-indigo-600">选填</span></div><div className="flex flex-col gap-1.5">{getTaskPinItems(cardActionModal.task).filter(item => !splitAssignedPinIds.has(item.id)).map(item => { const selected = splitSelectedPinIds.includes(item.id); return <button key={item.id} type="button" onClick={() => setSplitSelectedPinIds(prev => selected ? prev.filter(id => id !== item.id) : [...prev, item.id])} className={`flex items-center justify-between rounded-lg border px-2 py-1.5 text-left transition-colors ${selected ? 'border-indigo-300 bg-white text-indigo-900' : 'border-transparent bg-white/70 text-slate-600 hover:border-indigo-200'}`}><span className="font-mono text-xs font-semibold">{item.pin}</span><MaterialIcon name={selected ? 'check_circle' : 'radio_button_unchecked'} size={16} className={selected ? 'text-indigo-600' : 'text-slate-300'} /></button>; })}</div></div>}
+                      {getTaskExpiryItems(cardActionModal.task).length > 0 && <div className="rounded-xl border border-cyan-100 bg-cyan-50/40 p-2.5"><div className="mb-2 flex items-center justify-between"><span className="flex items-center gap-1 text-[11px] font-bold text-cyan-900"><MaterialIcon name="event" size={14} />有效期</span><span className="text-[10px] text-cyan-600">选填</span></div><div className="flex flex-col gap-1.5">{getTaskExpiryItems(cardActionModal.task).filter(item => !splitAssignedExpiryIds.has(item.id)).map(item => { const selected = splitSelectedExpiryIds.includes(item.id); return <button key={item.id} type="button" onClick={() => setSplitSelectedExpiryIds(prev => selected ? prev.filter(id => id !== item.id) : [...prev, item.id])} className={`flex items-center justify-between rounded-lg border px-2 py-1.5 text-left transition-colors ${selected ? 'border-cyan-300 bg-white text-cyan-900' : 'border-transparent bg-white/70 text-slate-600 hover:border-cyan-200'}`}><span className="font-mono text-xs font-semibold">{item.expiryDate}</span><MaterialIcon name={selected ? 'check_circle' : 'radio_button_unchecked'} size={16} className={selected ? 'text-cyan-600' : 'text-slate-300'} /></button>; })}</div></div>}
+                      {getTaskReceiptItems(cardActionModal.task).length > 0 && <div className="rounded-xl border border-amber-100 bg-amber-50/40 p-2.5"><div className="mb-2 flex items-center justify-between"><span className="flex items-center gap-1 text-[11px] font-bold text-amber-900"><MaterialIcon name="receipt_long" size={14} />收据凭证</span><span className="text-[10px] text-amber-600">选填</span></div><div className="grid grid-cols-2 gap-1.5">{getTaskReceiptItems(cardActionModal.task).filter(item => !splitAssignedReceiptIds.has(item.id)).map((item, index) => { const selected = splitSelectedReceiptIds.includes(item.id); return <button key={item.id} type="button" onClick={() => setSplitSelectedReceiptIds(prev => selected ? prev.filter(id => id !== item.id) : [...prev, item.id])} className={`relative h-12 overflow-hidden rounded-lg border transition-colors ${selected ? 'border-amber-400 ring-2 ring-amber-100' : 'border-white hover:border-amber-200'}`}><img src={item.imageUrl} alt={item.name} className="h-full w-full object-cover" /><span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[9px] font-bold text-white">{index + 1}</span><MaterialIcon name={selected ? 'check_circle' : 'radio_button_unchecked'} size={16} className={`absolute bottom-1 right-1 rounded-full bg-white ${selected ? 'text-amber-600' : 'text-slate-400'}`} /></button>; })}</div></div>}
+                    </div>}
                   </div>
 
                   {/* 模块三：新卡单信息录入 (字段与修改卡信息一致) */}
@@ -7597,7 +8024,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                         <MaterialIcon name="add_card" size={16} className="text-blue-600" />
                         <span>模块三：新卡单信息录入</span>
                       </span>
-                      <span className="text-[11px] text-slate-400 font-mono">新单号: {splitNewOrderId}</span>
+                      <span className="text-[11px] text-slate-400 font-mono">{splitEditingDraftId ? '编辑草稿' : `新卡单草稿 ${String(splitDrafts.length + 1).padStart(2, '0')}`}</span>
                     </div>
 
                     {/* 1. 卡类型 */}
@@ -7727,18 +8154,20 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
 
                     {/* 7. 备注说明 */}
                     <div className="flex flex-col gap-1.5 pt-1">
-                      <span className="font-semibold text-slate-700">拆单英文备注 (选填)</span>
+                      <div className="flex items-center justify-between gap-3"><span className="font-semibold text-slate-700">拆单备注</span><span className="font-mono text-[10px] text-slate-400">{splitNote.length}/500</span></div>
                       <textarea
                         value={splitNote}
-                        onChange={e => setSplitNote(e.target.value)}
+                        onChange={e => setSplitNote(e.target.value.replace(/[\u4E00-\u9FFF]/g, '').slice(0, 500))}
+                        maxLength={500}
                         rows={2}
-                        placeholder="Optional English note for split order..."
+                        placeholder="请输入"
                         className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 font-sans focus:outline-none focus:border-blue-500 resize-none"
                       ></textarea>
+                      <span className="text-[11px] text-slate-400"><strong className="font-semibold text-slate-700">非必填，用户端展示</strong>，请用英文描述，不支持输入汉字</span>
                     </div>
                   </div>
                 </div>
-              ) : (
+              ) : splitOrderStep === 2 ? (
                 /* 拆单步骤 2: 核对拆单对比项与二次确认提交 */
                 <div className="p-6 flex-1 min-h-0 max-h-[calc(90vh-130px)] flex flex-col gap-4 text-xs overflow-y-auto overscroll-contain pr-3">
                   <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200">
@@ -7758,7 +8187,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                     <div className="flex flex-col gap-1">
                       <span className="font-bold text-xs">拆单二次确认提示</span>
                       <span className="text-[11px] text-amber-800 leading-relaxed">
-                        提交成功后，从原单中划出的卡图将独立生成一个新的卡单（新单号：<strong className="font-mono">{splitNewOrderId}</strong>），且该新卡单将默认归属到 <strong className="text-amber-950 font-bold">【无商户接卡】</strong> 列表中，请仔细核对以下对比项：
+                        确认后将本次拆单保存为草稿；全部草稿统一提交生效后，将生成正式新卡单并归入 <strong className="text-amber-950 font-bold">【无商户接卡】</strong> 列表。
                       </span>
                     </div>
                   </div>
@@ -7788,7 +8217,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                     <div className="flex flex-col gap-2.5 bg-blue-50/60 p-3.5 rounded-xl border border-blue-200">
                       <span className="font-bold text-blue-900 text-xs flex items-center gap-1.5">
                         <MaterialIcon name="fiber_new" size={15} className="text-blue-600" />
-                        <span>新生成卡单 ({splitNewOrderId}) 概览</span>
+                        <span>待生成新卡单草稿</span>
                       </span>
                       <div className="flex flex-col gap-1.5 text-xs text-slate-700">
                         <div className="flex justify-between">
@@ -7799,9 +8228,9 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                           <span className="text-slate-500">面值 / 数量:</span>
                           <span className="font-mono font-bold text-slate-900">{splitFaceValue} / {splitQuantity}张</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">收卡报价:</span>
-                          <span className="font-mono font-semibold text-blue-700">￥{parseFloat(splitPurchaseRate || '0').toFixed(4)}</span>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500 shrink-0">报价:</span>
+                          <span className="font-mono text-right"><span className="text-emerald-700 font-semibold">用户成交报价: ￥{(parseFloat(splitPurchaseRate || '0') * 0.95).toFixed(4)}/₦{Math.ceil(parseFloat(splitPurchaseRate || '0') * 0.95 * 200)}</span><span className="mx-1 text-slate-300">|</span><span className="text-blue-700 font-semibold">收卡报价: {parseFloat(splitPurchaseRate || '0').toFixed(4)}</span></span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-500">划入卡图数:</span>
@@ -7813,6 +8242,38 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                         </div>
                       </div>
                     </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 flex-1 min-h-0 flex flex-col gap-4 text-xs overflow-y-auto overscroll-contain pr-3">
+                  <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3">
+                    <MaterialIcon name="fact_check" size={20} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div className="flex flex-col gap-1">
+                      <span className="font-bold text-xs">统一提交核对</span>
+                      <span className="text-[11px] text-amber-800">确认后将同步更新原单，并生成以下 {splitDrafts.length} 张新卡单。</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-2.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                      <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                        <MaterialIcon name="receipt" size={15} className="text-slate-600" />
+                        <span>原单剩余信息</span>
+                      </span>
+                      <div className="flex justify-between text-xs"><span className="text-slate-500">原单号</span><span className="font-mono font-semibold text-slate-900">{cardActionModal.task.id}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-500">拆分后剩余卡图</span><span className="font-mono font-bold text-slate-900">{getTaskCardItems(cardActionModal.task).length - splitDrafts.reduce((total, draft) => total + draft.selectedImageIds.length, 0)} 张</span></div>
+                    </div>
+                    <div className="flex flex-col gap-2.5 bg-blue-50/60 p-3.5 rounded-xl border border-blue-200">
+                      <span className="font-bold text-blue-900 text-xs flex items-center gap-1.5">
+                        <MaterialIcon name="add_card" size={15} className="text-blue-600" />
+                        <span>待生成新卡单</span>
+                      </span>
+                      <div className="flex justify-between text-xs"><span className="text-slate-500">草稿数量</span><span className="font-mono font-bold text-blue-800">{splitDrafts.length} 条</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-500">划入卡图</span><span className="font-mono font-semibold text-slate-900">{splitDrafts.reduce((total, draft) => total + draft.selectedImageIds.length, 0)} 张</span></div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3.5">
+                    <span className="font-bold text-slate-800 text-xs">新卡单草稿明细</span>
+                    {splitDrafts.map((draft, index) => <div key={draft.id} className="flex items-center justify-between text-xs border-t border-slate-100 pt-2"><span className="text-slate-700">草稿 {String(index + 1).padStart(2, '0')} · {draft.cardType} · {draft.country}</span><span className="font-mono text-slate-600">{draft.faceValue} / {draft.quantity}张 / {draft.selectedImageIds.length} 张卡图</span></div>)}
                   </div>
                 </div>
               )
@@ -9182,6 +9643,64 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                   </div>
                 )}
               </div>
+            ) : cardActionModal.type === 'auditFailed' ? (
+              <div className="p-5 flex-1 min-h-0 max-h-[calc(90vh-130px)] flex flex-col gap-4 text-xs overflow-y-auto overscroll-contain">
+                <div className="shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 shadow-2xs">
+                  <div className="flex flex-col gap-3 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <CardBrandLogo card={{ brandName: cardActionModal.task.cardType, iconType: cardActionModal.task.cardTypeIcon }} size="md" />
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold text-slate-900">{cardActionModal.task.cardFullName || `${cardActionModal.task.cardType}充值卡`}</div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700">{cardActionModal.task.countryFlag} {cardActionModal.task.countryName}</span>
+                          <span className="rounded-md bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">{cardActionModal.task.mediaTypeLabel || '卡图'}</span>
+                          <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">{cardActionModal.task.speedTag || '快卡'}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-col gap-1.5 sm:items-end">
+                      <div className="flex items-baseline gap-4 text-xs text-slate-700"><span>面值：<strong className="font-mono text-sm text-slate-900">{cardActionModal.task.faceValue}</strong></span><span>数量：<strong className="font-mono text-sm text-slate-900">{cardActionModal.task.cardQuantity || 1}张</strong></span></div>
+                      <div className="flex flex-wrap items-center justify-end gap-1.5 font-mono text-[11px]"><span className="text-slate-600">用户成交报价：<strong className="text-sm text-emerald-700">{cardActionModal.task.userDealQuote || '--'}</strong></span><span className="text-slate-300">|</span><span className="text-slate-600">收卡报价：<strong className="text-sm text-blue-700">{cardActionModal.task.merchantQuote || '--'}</strong></span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="shrink-0 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+                    <div className="mb-3 flex items-center gap-1.5 font-bold text-slate-800"><MaterialIcon name="person" size={16} className="text-indigo-600" />客户信息</div>
+                    <div className="space-y-2"><div className="flex justify-between gap-3"><span className="text-slate-500">昵称</span><span className="font-medium text-slate-800">{cardActionModal.task.user.name}</span></div><div className="flex justify-between gap-3"><span className="text-slate-500">ID&等级</span><span className="font-mono font-medium text-slate-800">{cardActionModal.task.user.level} {cardActionModal.task.user.userId}</span></div></div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+                    <div className="mb-3 flex items-center gap-1.5 font-bold text-slate-800"><MaterialIcon name="support_agent" size={16} className="text-emerald-600" />收卡商户及处理人</div>
+                    <div className="space-y-2"><div className="flex justify-between gap-3"><span className="text-slate-500">收卡商户</span><span className="text-right font-medium text-slate-800">{cardActionModal.task.currentMerchant ? `${cardActionModal.task.currentMerchant.name}(${cardActionModal.task.currentMerchant.id})` : '--'}</span></div><div className="flex justify-between gap-3"><span className="text-slate-500">卡单处理人</span><span className="text-right font-medium text-slate-800">{cardActionModal.task.assignedCs?.label || cardActionModal.task.auditReviewer || '--'}</span></div></div>
+                  </div>
+                </div>
+
+                <div className="shrink-0 rounded-xl border border-rose-200 bg-rose-50/50 p-3.5">
+                  <div className="mb-3 flex items-center gap-1.5 font-bold text-rose-900"><MaterialIcon name="error" size={16} className="text-rose-600" />失败处理信息</div>
+                  <div className="grid gap-3 md:grid-cols-[150px_1fr]"><span className="text-slate-600">处理结果</span><span className="w-fit rounded-md bg-rose-100 px-2.5 py-1.5 font-semibold text-rose-700">处理失败</span><span className="text-slate-600">失败原因</span><span className="font-medium text-slate-800">{auditFailureReason}</span><span className="text-slate-600">其他原因补充</span><span className="leading-relaxed text-slate-800">{auditReasonNote}</span></div>
+                  <div className="mt-3 border-t border-rose-200/70 pt-3"><div className="mb-2 flex items-center gap-1.5 font-medium text-slate-700"><MaterialIcon name="photo_library" size={15} className="text-rose-600" />截图凭证 <span className="font-normal text-[10px] text-slate-400">仅支持查看</span></div><div className="flex flex-wrap gap-2.5">{getTaskAuditProofImages(cardActionModal.task).map((image, index) => <button key={image.id} type="button" onClick={() => setPreviewImageModal({ url: image.url, title: `截图凭证 #${index + 1}` })} className="group relative h-16 w-20 overflow-hidden rounded-lg border border-rose-100 bg-white text-left"><img src={image.url} alt={image.name} className="h-full w-full object-cover transition-transform group-hover:scale-105" /><span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold text-white">{index + 1}</span></button>)}</div></div>
+                </div>
+
+                <div className="shrink-0 rounded-xl border border-blue-200 bg-blue-50/50 p-3.5">
+                  <div className="mb-3 flex items-center gap-1.5 font-bold text-blue-900"><MaterialIcon name="fact_check" size={16} className="text-blue-600" />审核结果</div>
+                  <div className="grid gap-3 md:grid-cols-[150px_1fr]"><label className="pt-2 text-slate-600">审核结果<span className="text-rose-500">*</span></label><select value={auditResult} onChange={e => { setAuditResult(e.target.value); setAuditSpecialReason(''); }} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-blue-500"><option>审核通过</option><option>撤回重新处理</option><option>强制处理成功</option></select>{(auditResult === '撤回重新处理' || auditResult === '强制处理成功') && <><span className="text-slate-600">{auditResult === '撤回重新处理' ? '提示' : '提示'}</span><span className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${auditResult === '强制处理成功' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{auditResult === '撤回重新处理' ? '提示：若选择“撤回重新处理”，提交后请在工作台【已撤回·待处理】中及时跟进处理。' : '提示：若选择“强制处理成功”，卡单将变更为“处理成功”状态，且将立即放款给用户，请谨慎操作！'}</span><label className="pt-2 text-slate-600">原因<span className="text-rose-500">*</span></label><div><textarea value={auditSpecialReason} onChange={e => setAuditSpecialReason(e.target.value)} maxLength={500} rows={3} placeholder="请输入原因" className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs leading-relaxed outline-none focus:border-blue-500" /><div className="mt-1 text-right text-[10px] text-slate-400">{auditSpecialReason.length}/500</div></div></>}</div>
+                </div>
+
+                {auditResult === '审核通过' && <div className="shrink-0 rounded-xl border border-slate-200 bg-white p-3.5">
+                  <div className="mb-3 flex items-center gap-2 font-bold text-slate-800"><MaterialIcon name="chat" size={16} className="text-indigo-600" />对客户解释内容 <span className="font-normal text-[10px] text-rose-500">审核通过后，以下内容用户可见</span></div>
+                  <div className="grid gap-3 md:grid-cols-[150px_1fr]">
+                    <label className="pt-2 text-slate-600">失败原因</label>
+                    <select value={auditClientFailureReason} onChange={e => setAuditClientFailureReason(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-blue-500"><option>测试新增</option><option>二手卡</option><option>被赎回</option><option>僵尸卡</option></select>
+                    <label className="pt-2 text-slate-600">其他原因补充</label>
+                    <div><textarea value={auditClientReasonNote} onChange={e => setAuditClientReasonNote(e.target.value)} maxLength={500} rows={3} className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs leading-relaxed outline-none focus:border-blue-500" /><div className="mt-1 flex items-center justify-between gap-3 text-[10px]"><span className="text-slate-400"><strong className="font-semibold text-slate-600">非必填，用户端展示</strong>，请用英文描述，不支持输入汉字</span><span className="shrink-0 text-slate-400">{auditClientReasonNote.length}/500</span></div></div>
+                    <span className="pt-1 text-slate-600">截图凭证</span>
+                    <div className="flex flex-wrap gap-2.5">{getTaskAuditProofImages(cardActionModal.task).map((image, index) => { const selected = auditSelectedProofIds.includes(image.id); return <div key={image.id} className={`group relative h-16 w-20 overflow-hidden rounded-lg border ${selected ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200'} bg-slate-50`}><button type="button" onClick={() => setPreviewImageModal({ url: image.url, title: `截图凭证 #${index + 1}` })} className="h-full w-full"><img src={image.url} alt={image.name} className="h-full w-full object-cover" /></button><button type="button" onClick={() => setAuditSelectedProofIds(prev => selected ? prev.filter(id => id !== image.id) : [...prev, image.id])} className={`absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-md ${selected ? 'bg-blue-500 text-white' : 'bg-white/95 text-slate-400 shadow-sm'}`} title={selected ? '取消勾选' : '勾选凭证'}><MaterialIcon name={selected ? 'check' : 'add'} size={14} /></button></div>})}</div>
+                    <span className="pt-2 text-slate-600">补充凭证</span>
+                    <div><div className="flex flex-wrap gap-2.5"><input ref={auditSupplementFileInputRef} type="file" multiple accept=".png,.jpg,.jpeg,image/png,image/jpeg" className="hidden" onChange={e => { if (e.target.files) handleAuditSupplementFiles(e.target.files); e.target.value = ''; }} />{auditSupplementImages.map((image, index) => <div key={image.id} className="group relative h-16 w-20 overflow-hidden rounded-lg border border-slate-200 bg-slate-50"><button type="button" onClick={() => setPreviewImageModal({ url: image.dataUrl, title: `补充凭证 #${index + 1}` })} className="h-full w-full"><img src={image.dataUrl} alt={image.name} className="h-full w-full object-cover" /></button><button type="button" onClick={() => setAuditSupplementImages(prev => prev.filter(item => item.id !== image.id))} className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-md bg-rose-500 text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100" title="删除"><MaterialIcon name="close" size={13} /></button></div>)}<button type="button" onClick={() => auditSupplementFileInputRef.current?.click()} className="flex h-16 w-20 flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"><MaterialIcon name="add" size={20} /><span className="mt-0.5 text-[10px]">上传凭证</span></button></div><div className="mt-1.5 text-[10px] text-slate-400">用户端展示，请上传 格式为 <strong className="font-semibold text-rose-500">png/jpg/jpeg</strong> 的文件　【请将图片 <span className="font-semibold text-blue-600">拖拽 / 粘贴</span> 在此处上传】</div></div>
+                  </div>
+                </div>}
+              </div>
             ) : (
               /* 其他 1 类预留为空的占位区域 */
               <div className="p-6 flex flex-col gap-4 text-xs">
@@ -9204,7 +9723,12 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
 
             {/* 弹窗 Footer */}
             <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5 shrink-0">
-              {cardActionModal.type === 'recall' ? (
+              {cardActionModal.type === 'auditFailed' ? (
+                <>
+                  <button type="button" onClick={handleCloseCardActionModal} className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold cursor-pointer transition-colors">取消</button>
+                  <button type="button" onClick={handleConfirmCardAction} className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs cursor-pointer transition-colors">确认提交</button>
+                </>
+              ) : cardActionModal.type === 'recall' ? (
                 <>
                   <button
                     type="button"
@@ -9304,25 +9828,44 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                   </>
                 )
               ) : cardActionModal.type === 'splitOrder' ? (
-                splitOrderStep === 1 ? (
+                splitOrderStep === 0 ? (
                   <>
                     <button
                       type="button"
                       onClick={handleCloseCardActionModal}
                       className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold cursor-pointer transition-colors"
                     >
-                      取消
+                      关闭
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsSplitBatchConfirmOpen(true)}
+                      disabled={splitDrafts.length === 0}
+                      className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-bold shadow-xs cursor-pointer transition-colors flex items-center gap-1"
+                    >
+                      <MaterialIcon name="check" size={15} />
+                      <span>确认提交生效</span>
+                    </button>
+                  </>
+                ) : splitOrderStep === 1 ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setSplitOrderStep(0)}
+                      className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold cursor-pointer transition-colors"
+                    >
+                      返回
                     </button>
                     <button
                       type="button"
                       onClick={handleSplitOrderProceedToReview}
                       className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs cursor-pointer transition-colors flex items-center gap-1"
                     >
-                      <span>保存拆单并核对</span>
-                      <MaterialIcon name="arrow_forward" size={15} />
+                      <span>确认提交</span>
+                      <MaterialIcon name="check" size={15} />
                     </button>
                   </>
-                ) : (
+                ) : splitOrderStep === 2 ? (
                   <>
                     <button
                       type="button"
@@ -9345,7 +9888,25 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                       className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs cursor-pointer transition-colors flex items-center gap-1"
                     >
                       <MaterialIcon name="check" size={15} />
-                      <span>确认提交拆单生效</span>
+                      <span>确认本次拆单</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setSplitOrderStep(0)}
+                      className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold cursor-pointer transition-colors"
+                    >
+                      返回草稿
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmSplitBatch}
+                      className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs cursor-pointer transition-colors flex items-center gap-1"
+                    >
+                      <MaterialIcon name="check" size={15} />
+                      <span>确认统一提交生效</span>
                     </button>
                   </>
                 )
@@ -9418,6 +9979,18 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                 </>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {isSplitBatchConfirmOpen && cardActionModal?.type === 'splitOrder' && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/30 p-4 backdrop-blur-[1px]" onClick={() => setIsSplitBatchConfirmOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-150" onClick={event => event.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><MaterialIcon name="warning" size={20} /></div>
+              <div className="min-w-0"><h3 className="text-sm font-bold text-slate-900">确认提交生效？</h3><p className="mt-1 text-xs leading-relaxed text-slate-500">将生成 {splitDrafts.length} 张新卡单，并将已分配的凭证从原单划转至新单。新单将归入“无商户接卡”。</p></div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setIsSplitBatchConfirmOpen(false)} className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100">取消</button><button type="button" onClick={() => { setIsSplitBatchConfirmOpen(false); handleConfirmSplitBatch(); }} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-emerald-700"><MaterialIcon name="check" size={15} />确认提交生效</button></div>
           </div>
         </div>
       )}
