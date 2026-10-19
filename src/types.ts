@@ -158,6 +158,8 @@ export type NavPath =
   | 'quote-rules'
   | 'rule-quote'
   | 'rule-card-check'
+  | 'rule-card-making'
+  | 'rule-withdrawal'
   | 'rule-risk'
   | 'rule-sla'
   | 'rule-loss'
@@ -211,6 +213,9 @@ export interface UserItem {
   referralShare: string;
   registeredDate?: string;
   email?: string;
+  registrationMethod?: 'email' | 'phone';
+  userWhatsAppNumbers?: string[];
+  operatorWhatsAppNumbers?: string[];
   location?: string;
   growthPoints?: number;
   maxGrowthPoints?: number;
@@ -219,7 +224,24 @@ export interface UserItem {
   lastIp?: string;
   avatarUrl?: string;
   riskLogs: { title: string; time: string; desc: string }[];
-  transactions: { id: string; card: string; amount: number; time: string; status: string; rate?: string }[];
+  transactions: {
+    id: string;
+    card: string;
+    amount: number;
+    time: string;
+    status: string;
+    rate?: string;
+    orderNo?: string;
+    cardName?: string;
+    country?: string;
+    faceValueQuantity?: string;
+    quote?: string;
+    totalAmount?: string;
+    reward?: string;
+    settlementTotal?: string;
+    orderTime?: string;
+    processingStatus?: string;
+  }[];
 }
 
 export interface CardOrderItem {
@@ -448,6 +470,36 @@ export interface MerchantCapabilityRule {
   isActive: boolean;
 }
 
+export type ProcessingDenominationType = '不限' | '倍数面值' | '范围面值' | '指定面值';
+
+export interface MerchantProcessingDurationRule {
+  id: string;
+  countries: string[];
+  cardHeads: string[];
+  cardTypes: string[];
+  speeds: string[];
+  denominationTypes: ProcessingDenominationType[];
+  rangeMin?: number;
+  rangeMax?: number;
+  multipleBase?: number;
+  multipleMin?: number;
+  multipleMax?: number;
+  specifiedValues?: string;
+  processingDurationSec: number;
+  afterSalesDurationMin: number;
+  isActive: boolean;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface MerchantProcessingCardRule {
+  cardName: string;
+  allowException: boolean;
+  selfDelayEnabled: boolean;
+  selfDelayMinutes: number;
+  durationRules: MerchantProcessingDurationRule[];
+}
+
 export interface MerchantItem {
   id: string;
   mid: string;
@@ -458,6 +510,7 @@ export interface MerchantItem {
   legalPerson: string;
   phone: string;
   email: string;
+  remark?: string;
   vipTag: string;
   tier: string;
   tierCode?: 'S' | 'A' | 'B' | 'C';
@@ -498,6 +551,8 @@ export interface MerchantItem {
   collateralPenaltyCount: number;
   disputeCount: number;
   capabilityRules?: MerchantCapabilityRule[];
+  processingRuleConfigs?: MerchantProcessingCardRule[];
+  pointsWallet?: MerchantPointsWallet;
   recentTrades: {
     id: string;
     card: string;
@@ -517,6 +572,29 @@ export interface MerchantItem {
     desc: string;
     type: 'primary' | 'secondary' | 'neutral';
   }[];
+}
+
+export interface MerchantPointsWallet {
+  status: '正常' | '已被禁用';
+  availablePoints: number;
+  frozenPoints: number;
+  totalRechargedPoints: number;
+  withdrawnPoints: number;
+  settledPoints: number;
+  uAddress?: string;
+  disabledInfo?: {
+    reason: string;
+    operatedAt: string;
+    operator: string;
+  };
+  frozenDetails: MerchantFrozenPointsRecord[];
+}
+
+export interface MerchantFrozenPointsRecord {
+  id: string;
+  amount: number;
+  frozenAt: string;
+  operator: string;
 }
 
 // 经营分析 (Business Analytics) Interfaces

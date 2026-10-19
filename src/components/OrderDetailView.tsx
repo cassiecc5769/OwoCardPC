@@ -468,7 +468,7 @@ export const OrderDetailView: React.FC<OrderDetailViewProps> = ({
               <span className="text-xs text-slate-400 font-mono">交易主体与核心标识</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/60 space-y-1">
                 <span className="text-slate-400 text-[11px] block">系统订单号 (Order ID)</span>
                 <div className="flex items-center justify-between">
@@ -607,7 +607,7 @@ export const OrderDetailView: React.FC<OrderDetailViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/60 space-y-1">
                 <span className="text-slate-400 text-[11px] block">卡种与品牌 (Brand)</span>
                 <span className="font-bold text-slate-900 text-sm">{order.brand}</span>
@@ -887,7 +887,7 @@ export const OrderDetailView: React.FC<OrderDetailViewProps> = ({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/60 space-y-1">
                 <span className="text-slate-400 text-[11px] block">承接商户</span>
                 <span className="font-bold text-slate-900 text-sm">{order.merchantName}</span>
@@ -906,6 +906,23 @@ export const OrderDetailView: React.FC<OrderDetailViewProps> = ({
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/60 space-y-1">
                 <span className="text-slate-400 text-[11px] block">履约结果</span>
                 <span className="font-bold text-emerald-700 text-xs">{order.merchantFulfillment?.result || '核销成功'}</span>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/60 space-y-1">
+                <span className="text-slate-400 text-[11px] block">处理结果来源</span>
+                <span className={`font-bold text-xs ${order.processCompletionSource === '系统超时自动成功' ? 'text-amber-700' : 'text-emerald-700'}`}>
+                  {order.processCompletionSource || '商户提交成功'}
+                </span>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/60 space-y-1">
+                <span className="text-slate-400 text-[11px] block">做卡时限规则快照</span>
+                <span className="font-bold text-slate-800 text-xs block">
+                  {order.processingRuleSnapshot ? `${order.processingRuleSnapshot.source} · ${order.processingRuleSnapshot.durationMinutes} 分钟` : '平台默认 · 15 分钟'}
+                </span>
+                <span className="font-mono text-[10px] text-slate-500 block">
+                  截止 {order.processingRuleSnapshot?.deadline || '未记录'}
+                </span>
               </div>
             </div>
           </section>

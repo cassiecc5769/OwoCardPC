@@ -691,6 +691,11 @@ export const OrderManagementView: React.FC<OrderManagementViewProps> = ({ onNavi
                         <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
                         {item.txnStatusLabel || item.txnStatus}
                       </span>
+                      {item.txnStatus === 'completed' && (
+                        <div className={`mt-1 text-[10px] font-medium ${item.processCompletionSource === '系统超时自动成功' ? 'text-amber-700' : 'text-slate-500'}`}>
+                          {item.processCompletionSource || '商户提交成功'}
+                        </div>
+                      )}
                     </td>
 
                     {/* 风控状态 */}

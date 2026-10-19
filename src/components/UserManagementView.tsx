@@ -92,7 +92,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
   // Multi-dimensional filters
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTier, setSelectedTier] = useState('全部等级');
-  const [selectedKyc, setSelectedKyc] = useState('全部认证状态');
+  const [selectedServiceTags, setSelectedServiceTags] = useState<string[]>([]);
+  const [isServiceTagFilterOpen, setIsServiceTagFilterOpen] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState('全部获客来源');
   const [selectedRisk, setSelectedRisk] = useState('全部风控信誉');
   const [accountStatus, setAccountStatus] = useState<'全部' | '正常' | '限制交易' | '已冻结'>('全部');
@@ -130,9 +131,21 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
     showToast(`已复制 ${label}: ${text}`);
   };
 
+  const maskEmail = (email?: string) => {
+    if (!email) return '—';
+    const [localPart, domain] = email.split('@');
+    if (!domain) return email;
+    const visible = localPart.length <= 2 ? localPart.slice(0, 1) : localPart.slice(0, 2);
+    return `${visible}${'*'.repeat(Math.max(2, localPart.length - visible.length))}@${domain}`;
+  };
+
   const selectedUser = useMemo(() => {
     return users.find(u => u.id === selectedUserId) || users[0];
   }, [users, selectedUserId]);
+
+  const serviceTagOptions = useMemo(() => {
+    return Array.from(new Set(users.flatMap(user => user.tags))).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  }, [users]);
 
   const filteredUsers = useMemo(() => {
     return users.filter(user => {
@@ -166,11 +179,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
         if (!user.tier.includes(selectedTier.replace(/ \(.*/, ''))) return false;
       }
 
-      // KYC Status
-      if (selectedKyc !== '全部认证状态') {
-        if (selectedKyc === '未实名' && user.kycStatus !== '未认证') return false;
-        if (selectedKyc === '基础实名' && !user.kycStatus.includes('基础')) return false;
-        if (selectedKyc === 'KYC高级认证' && !user.kycStatus.includes('高级') && !user.kycStatus.includes('KYC已认证')) return false;
+      if (selectedServiceTags.length > 0 && !selectedServiceTags.some(tag => user.tags.includes(tag))) {
+        return false;
       }
 
       // Channel
@@ -195,12 +205,13 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
 
       return true;
     });
-  }, [users, quickSlice, searchQuery, selectedTier, selectedKyc, selectedChannel, selectedRisk, accountStatus]);
+  }, [users, quickSlice, searchQuery, selectedTier, selectedServiceTags, selectedChannel, selectedRisk, accountStatus]);
 
   const handleResetFilters = () => {
     setSearchQuery('');
     setSelectedTier('全部等级');
-    setSelectedKyc('全部认证状态');
+    setSelectedServiceTags([]);
+    setIsServiceTagFilterOpen(false);
     setSelectedChannel('全部获客来源');
     setSelectedRisk('全部风控信誉');
     setAccountStatus('全部');
@@ -488,9 +499,6 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
             <span className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold">
               累计出卡总额 / GMV VOLUME
             </span>
-            <span className="px-2 py-0.5 rounded text-[11px] font-code-token font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">
-              折合 $21.38M USD
-            </span>
           </div>
           <div className="my-2.5 flex items-baseline gap-2">
             <span className="text-2xl font-bold font-mono tracking-tight text-slate-900">¥148,250,000</span>
@@ -623,18 +631,42 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
             </select>
           </div>
 
-          {/* KYC 认证状态 */}
-          <div>
-            <select
-              value={selectedKyc}
-              onChange={e => setSelectedKyc(e.target.value)}
-              className="w-full h-9 px-2.5 bg-slate-50 rounded-lg text-xs text-slate-700 border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-600 cursor-pointer"
+          {/* 客服运营标签（多选） */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsServiceTagFilterOpen(open => !open)}
+              className="w-full h-9 px-2.5 bg-slate-50 rounded-lg text-xs text-slate-700 border border-slate-200 hover:bg-white focus:outline-none focus:ring-1 focus:ring-blue-600 cursor-pointer flex items-center justify-between gap-2"
+              aria-expanded={isServiceTagFilterOpen}
             >
-              <option>全部认证状态</option>
-              <option>未实名</option>
-              <option>基础实名</option>
-              <option>KYC高级认证</option>
-            </select>
+              <span className="truncate">
+                {selectedServiceTags.length > 0 ? `客服运营标签 (${selectedServiceTags.length})` : '客服运营标签'}
+              </span>
+              <span className="material-symbols-outlined text-[16px] text-slate-400">{isServiceTagFilterOpen ? 'expand_less' : 'expand_more'}</span>
+            </button>
+            {isServiceTagFilterOpen && (
+              <div className="absolute left-0 top-10 z-30 w-full min-w-[220px] rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+                <div className="flex items-center justify-between px-1 pb-1.5 border-b border-slate-100">
+                  <span className="text-[11px] font-semibold text-slate-500">支持多选（命中任一标签）</span>
+                  {selectedServiceTags.length > 0 && (
+                    <button type="button" onClick={() => setSelectedServiceTags([])} className="text-[11px] text-blue-600 hover:text-blue-800 cursor-pointer">清空</button>
+                  )}
+                </div>
+                <div className="max-h-52 overflow-y-auto pt-1">
+                  {serviceTagOptions.map(tag => (
+                    <label key={tag} className="flex items-center gap-2 rounded-md px-1.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedServiceTags.includes(tag)}
+                        onChange={event => setSelectedServiceTags(current => event.target.checked ? [...current, tag] : current.filter(item => item !== tag))}
+                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                      <span className="truncate">{tag}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 引流渠道 */}
@@ -762,17 +794,19 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                 {activeVisibleColumns.map(col => {
                   switch (col.id) {
                     case 'uid_kyc':
-                      return <th key={col.id} className="px-3.5 whitespace-nowrap">用户UID / 认证资质</th>;
+                      return <th key={col.id} className="px-3.5 whitespace-nowrap">用户UID</th>;
                     case 'user_info':
-                      return <th key={col.id} className="px-3.5 whitespace-nowrap">用户昵称 / 关联手机</th>;
+                      return <th key={col.id} className="px-3.5 whitespace-nowrap">用户昵称 / 注册账号 / 关联邮箱</th>;
+                    case 'invite_code':
+                      return <th key={col.id} className="px-3.5 whitespace-nowrap">邀请码</th>;
                     case 'tier':
                       return <th key={col.id} className="px-3.5 whitespace-nowrap">会员等级</th>;
                     case 'tags':
-                      return <th key={col.id} className="px-3.5 whitespace-nowrap">客群运营标签</th>;
+                      return <th key={col.id} className="px-3.5 whitespace-nowrap">客服运营标签</th>;
                     case 'channel_rep':
                       return <th key={col.id} className="px-3.5 whitespace-nowrap">渠道归因 / 专职客服</th>;
                     case 'gmv':
-                      return <th key={col.id} className="px-3.5 whitespace-nowrap text-left">累计出卡总额 (GMV)</th>;
+                      return <th key={col.id} className="px-3.5 whitespace-nowrap text-left">累计出卡总额</th>;
                     case 'trades':
                       return <th key={col.id} className="px-3.5 whitespace-nowrap">成单笔数 / 核销率</th>;
                     case 'last_card_time':
@@ -853,17 +887,6 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                                       <span className="material-symbols-outlined text-[14px]">content_copy</span>
                                     </button>
                                   </div>
-                                  <span className={`inline-block px-1.5 py-0.2 rounded text-[10px] font-semibold w-fit ${
-                                    user.kycStatus === 'KYC高级'
-                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                                      : user.kycStatus === '基础实名'
-                                      ? 'bg-blue-50 text-blue-700 border border-blue-100'
-                                      : user.kycStatus === '高危复核'
-                                      ? 'bg-rose-50 text-rose-700 border border-rose-200 animate-pulse'
-                                      : 'bg-slate-100 text-slate-600'
-                                  }`}>
-                                    {user.kycStatus} {user.kycDocType ? `(${user.kycDocType})` : ''}
-                                  </span>
                                 </div>
                               </td>
                             );
@@ -889,8 +912,18 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                                     <span className="font-code-token text-[11px] text-slate-500">
                                       {user.phone}
                                     </span>
+                                    <span className="font-code-token text-[11px] text-slate-400 truncate max-w-[180px]" title={user.email || undefined}>
+                                      {maskEmail(user.email)}
+                                    </span>
                                   </div>
                                 </div>
+                              </td>
+                            );
+
+                          case 'invite_code':
+                            return (
+                              <td key={col.id} className="px-3.5 py-2.5">
+                                <span className="font-code-token font-semibold text-slate-700">{user.inviteCode || '—'}</span>
                               </td>
                             );
 
@@ -940,9 +973,6 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                                 <div className="flex flex-col">
                                   <span className="font-numeric-stat font-bold text-slate-900 text-[13px]">
                                     ¥{user.gmv.toLocaleString()}
-                                  </span>
-                                  <span className="font-code-token text-[11px] text-slate-400">
-                                    ${(user.gmvUsd || Math.round(user.gmv / 6.9)).toLocaleString()} USD
                                   </span>
                                 </div>
                               </td>
@@ -1367,7 +1397,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
             </div>
             <div className="p-5 space-y-3.5 text-xs">
               <p className="text-slate-500">
-                已选中 <strong className="text-slate-900">{selectedRowIds.length}</strong> 位用户，请输入需要追加的客群运营标签：
+                已选中 <strong className="text-slate-900">{selectedRowIds.length}</strong> 位用户，请输入需要追加的客服运营标签：
               </p>
               <input
                 type="text"

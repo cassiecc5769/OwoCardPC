@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { NavPath } from '../../types';
 
-export type RuleCategory = 'quote' | 'card_check' | 'risk' | 'sla' | 'loss';
+export type RuleCategory = 'quote' | 'card_check' | 'card_making' | 'withdrawal' | 'risk' | 'sla' | 'loss';
 
 export interface RuleItem {
   id: string;
@@ -29,6 +29,332 @@ export interface RuleAuditLog {
   effectiveTime: string;
   approvalTicket: string;
 }
+
+type CardMakingRuleKey =
+  | 'acceptTimeout'
+  | 'autoDispatchLimit'
+  | 'autoDispatchMinQuoteRatio'
+  | 'processingTimeoutMinutes'
+  | 'grabWindow'
+  | 'grabMinQuoteRatio';
+
+const CardMakingRulesPanel: React.FC<{ onSaved: (message: string) => void }> = ({ onSaved }) => {
+  const [values, setValues] = useState<Record<CardMakingRuleKey, number>>({
+    acceptTimeout: 120,
+    autoDispatchLimit: 3,
+    autoDispatchMinQuoteRatio: 0,
+    processingTimeoutMinutes: 15,
+    grabWindow: 15,
+    grabMinQuoteRatio: 0,
+  });
+  const [grabOrderEnabled, setGrabOrderEnabled] = useState(false);
+  const [errors, setErrors] = useState<Partial<Record<CardMakingRuleKey, string>>>({});
+
+  const updateValue = (key: CardMakingRuleKey, rawValue: string) => {
+    const value = Number(rawValue);
+    setValues(previous => ({ ...previous, [key]: Number.isFinite(value) ? value : 0 }));
+    setErrors(previous => ({ ...previous, [key]: undefined }));
+  };
+
+  const validateAndSave = () => {
+    const nextErrors: Partial<Record<CardMakingRuleKey, string>> = {};
+    const ranges: Record<CardMakingRuleKey, [number, number]> = {
+      acceptTimeout: [1, 3600],
+      autoDispatchLimit: [1, 5],
+      autoDispatchMinQuoteRatio: [0, 100],
+      processingTimeoutMinutes: [1, 1440],
+      grabWindow: [1, 3600],
+      grabMinQuoteRatio: [0, 100],
+    };
+
+    (Object.keys(ranges) as CardMakingRuleKey[]).forEach(key => {
+      const [min, max] = ranges[key];
+      if (values[key] < min || values[key] > max) nextErrors[key] = `请输入 ${min} - ${max} 之间的数值`;
+    });
+
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+    onSaved('做卡规则配置已保存并生效');
+  };
+
+  const Field = ({
+    ruleKey,
+    label,
+    unit,
+    hint,
+    disabled = false,
+    range,
+  }: {
+    ruleKey: CardMakingRuleKey;
+    label: string;
+    unit: string;
+    hint: string;
+    disabled?: boolean;
+    range: [number, number];
+  }) => (
+    <div className={disabled ? 'opacity-50' : ''}>
+      <div className="flex items-center gap-2">
+        <label htmlFor={ruleKey} className="text-sm font-bold text-slate-800">{label}</label>
+      </div>
+      <div className="mt-3 flex w-full max-w-[360px] overflow-hidden rounded-lg border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/10">
+        <input
+          id={ruleKey}
+          type="number"
+          min={range[0]}
+          max={range[1]}
+          value={values[ruleKey]}
+          disabled={disabled}
+          onChange={(event) => updateValue(ruleKey, event.target.value)}
+          className="h-10 min-w-0 flex-1 px-3 font-mono text-sm font-semibold text-slate-800 outline-none disabled:cursor-not-allowed disabled:bg-slate-50"
+        />
+        <span className="flex w-16 items-center justify-center border-l border-slate-300 bg-slate-50 text-sm font-semibold text-slate-600">{unit}</span>
+      </div>
+      <div className="mt-2 min-h-4 text-xs leading-5">
+        {errors[ruleKey] ? <span className="text-rose-600">{errors[ruleKey]}</span> : <span className="text-slate-500">{hint}</span>}
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+      <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-sm">
+            <span className="material-symbols-outlined text-[20px]">credit_card</span>
+          </span>
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">做卡规则配置</h2>
+            <p className="mt-0.5 text-xs text-slate-500">派单、抢单与做卡处理时限</p>
+          </div>
+        </div>
+        <button onClick={validateAndSave} className="h-9 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-blue-700">
+          保存配置
+        </button>
+      </div>
+
+      <div className="divide-y divide-slate-200">
+        <section className="p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[19px] text-indigo-600">send</span>
+            <h3 className="text-sm font-bold text-slate-800">系统自动派单规则</h3>
+          </div>
+          <div className="grid grid-cols-1 gap-x-7 gap-y-6 lg:grid-cols-3">
+            <Field ruleKey="acceptTimeout" label="商户确认接卡时限" unit="秒" range={[1, 3600]} hint="若接卡商户（客服）在限制时间内没有完成确认接卡，那么卡单将会被收回重新派单。" />
+            <Field ruleKey="autoDispatchLimit" label="连续派单失败上限" unit="次" range={[1, 5]} hint="当卡单连续被商户拒单总次数达设置值时，那么停止自动派单且卡单默认收回至平台方。" />
+            <Field ruleKey="autoDispatchMinQuoteRatio" label="自动派单候选商户最低报价比例" unit="%" range={[0, 100]} hint="仅报价不低于锚定报价该比例的可接单商户可参与自动派单；填写 0 表示不按报价限制派单。" />
+          </div>
+        </section>
+
+        <section className="p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[19px] text-indigo-600">schedule</span>
+            <h3 className="text-sm font-bold text-slate-800">卡单处理规则</h3>
+          </div>
+          <div className="grid grid-cols-1 gap-x-7 gap-y-6 lg:grid-cols-3">
+            <Field ruleKey="processingTimeoutMinutes" label="平台默认做卡处理时长" unit="分钟" range={[1, 1440]} hint="商户确认接卡后开始计时。若做卡商户未配置个性化做卡时长，则使用该平台默认时长。" />
+            <div>
+              <span className="text-sm font-bold text-slate-800">处理超时后</span>
+              <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-emerald-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span>系统自动处理为成功</span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">商户提交做卡成功或做卡失败后，卡单即闭环；超过处理截止时间仍未提交结果时，系统自动将卡单处理为成功并闭环。</p>
+            </div>
+            <div>
+              <span className="text-sm font-bold text-slate-800">规则生效范围</span>
+              <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                <span>仅对新确认接卡单生效</span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">商户确认接卡时固化适用时长、规则来源和处理截止时间；后续规则变更不影响处理中卡单。</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="p-5">
+        <div className="mb-5 flex items-center gap-2">
+          <span className="material-symbols-outlined text-[19px] text-indigo-600">flag</span>
+          <h3 className="text-sm font-bold text-slate-800">抢单规则配置</h3>
+        </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div>
+            <span className="text-sm font-bold text-slate-800">抢单开关</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={grabOrderEnabled}
+              onClick={() => setGrabOrderEnabled(enabled => !enabled)}
+              className="mt-4 flex items-center gap-3 text-sm font-semibold text-slate-700"
+            >
+              <span className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${grabOrderEnabled ? 'bg-blue-600' : 'bg-slate-300'}`}>
+                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${grabOrderEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              </span>
+              <span className={grabOrderEnabled ? 'text-blue-600' : 'text-slate-500'}>{grabOrderEnabled ? '开启' : '关闭'}</span>
+            </button>
+            <p className="mt-3 max-w-sm text-xs leading-5 text-slate-500">关闭后系统不进入抢单模式；开启后按下方规则执行抢单。</p>
+          </div>
+          <Field ruleKey="grabWindow" label="抢单窗口时长" unit="秒" range={[1, 3600]} hint="用户提交开单后，系统进入抢单模式。符合条件的商户可在该时长内抢单；窗口结束仍无人抢单时，卡单自动进入系统派单流程。" disabled={!grabOrderEnabled} />
+          <Field ruleKey="grabMinQuoteRatio" label="抢单商户最低报价比例" unit="%" range={[0, 100]} hint="仅收卡报价不低于锚定报价该比例的商户可参与抢单；填写 0 表示不限制。" disabled={!grabOrderEnabled} />
+        </div>
+        <p className="mt-5 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">报价准入以商户点击抢单瞬间的当前有效报价为准；不达标商户不展示可抢入口。多个商户同时抢单时，以系统先成功落锁者为准。抢单失败或无人抢单不计入连续自动派单失败次数。</p>
+        </section>
+      </div>
+    </section>
+  );
+};
+
+type WithdrawalRuleKey = 'singleAmountThreshold' | 'dailyAmountThreshold' | 'frequencyWindowHours' | 'frequencyLimit';
+
+const WithdrawalRulesPanel: React.FC<{ onSaved: (message: string) => void }> = ({ onSaved }) => {
+  const [values, setValues] = useState<Record<WithdrawalRuleKey, number>>({
+    singleAmountThreshold: 1_000_000,
+    dailyAmountThreshold: 1_000_000,
+    frequencyWindowHours: 5,
+    frequencyLimit: 10,
+  });
+  const [errors, setErrors] = useState<Partial<Record<WithdrawalRuleKey, string>>>({});
+
+  const updateValue = (key: WithdrawalRuleKey, rawValue: string) => {
+    const value = Number(rawValue);
+    setValues(previous => ({ ...previous, [key]: Number.isFinite(value) ? value : 0 }));
+    setErrors(previous => ({ ...previous, [key]: undefined }));
+  };
+
+  const validateAndSave = () => {
+    const ranges: Record<WithdrawalRuleKey, [number, number]> = {
+      singleAmountThreshold: [1, 10_000_000],
+      dailyAmountThreshold: [1, 10_000_000],
+      frequencyWindowHours: [1, 168],
+      frequencyLimit: [1, 100],
+    };
+    const nextErrors: Partial<Record<WithdrawalRuleKey, string>> = {};
+
+    (Object.keys(ranges) as WithdrawalRuleKey[]).forEach(key => {
+      const [min, max] = ranges[key];
+      if (values[key] < min || values[key] > max) nextErrors[key] = `请输入 ${min} - ${max} 之间的数值`;
+    });
+
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+    onSaved('提现规则配置已保存并生效');
+  };
+
+  const Field = ({
+    ruleKey,
+    label,
+    unit,
+    hint,
+    range,
+  }: {
+    ruleKey: WithdrawalRuleKey;
+    label: string;
+    unit: string;
+    hint: string;
+    range: [number, number];
+  }) => (
+    <div>
+      <label htmlFor={ruleKey} className="text-sm font-bold text-slate-800">{label}</label>
+      <div className="mt-3 flex w-full max-w-[360px] overflow-hidden rounded-lg border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/10">
+        <input
+          id={ruleKey}
+          type="number"
+          min={range[0]}
+          max={range[1]}
+          value={values[ruleKey]}
+          onChange={(event) => updateValue(ruleKey, event.target.value)}
+          className="h-10 min-w-0 flex-1 px-3 font-mono text-sm font-semibold text-slate-800 outline-none"
+        />
+        <span className="flex w-16 items-center justify-center border-l border-slate-300 bg-slate-50 text-sm font-semibold text-slate-600">{unit}</span>
+      </div>
+      <div className="mt-2 min-h-4 text-xs leading-5">
+        {errors[ruleKey] ? <span className="text-rose-600">{errors[ruleKey]}</span> : <span className="text-slate-500">{hint}</span>}
+      </div>
+    </div>
+  );
+
+  const FrequencyInput = ({
+    ruleKey,
+    unit,
+    range,
+    ariaLabel,
+  }: {
+    ruleKey: 'frequencyWindowHours' | 'frequencyLimit';
+    unit: string;
+    range: [number, number];
+    ariaLabel: string;
+  }) => (
+    <span className="inline-flex flex-col align-middle">
+      <span className="flex w-32 overflow-hidden rounded-lg border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/10">
+        <input
+          id={ruleKey}
+          aria-label={ariaLabel}
+          type="number"
+          min={range[0]}
+          max={range[1]}
+          value={values[ruleKey]}
+          onChange={(event) => updateValue(ruleKey, event.target.value)}
+          className="h-10 min-w-0 flex-1 px-3 font-mono text-sm font-semibold text-slate-800 outline-none"
+        />
+        <span className="flex w-11 items-center justify-center border-l border-slate-300 bg-slate-50 text-xs font-semibold text-slate-600">{unit}</span>
+      </span>
+      {errors[ruleKey] && <span className="mt-1 text-xs leading-4 text-rose-600">{errors[ruleKey]}</span>}
+    </span>
+  );
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+      <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-sm">
+            <span className="material-symbols-outlined text-[20px]">account_balance_wallet</span>
+          </span>
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">提现规则配置</h2>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-500">
+              <span>异常提现识别与审核拦截</span>
+              <span className="text-slate-300">·</span>
+              <span className="text-amber-700">命中任一规则后，提现申请暂停出款并进入人工审核队列。</span>
+            </p>
+          </div>
+        </div>
+        <button onClick={validateAndSave} className="h-9 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-blue-700">
+          保存配置
+        </button>
+      </div>
+
+      <div className="divide-y divide-slate-200">
+        <section className="p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[19px] text-indigo-600">payments</span>
+            <h3 className="text-sm font-bold text-slate-800">金额超限类</h3>
+          </div>
+          <div className="grid grid-cols-1 gap-x-7 gap-y-6 lg:grid-cols-2">
+            <Field ruleKey="singleAmountThreshold" label="单次提现人工审核阈值" unit="奈拉" range={[1, 10_000_000]} hint="单笔提现金额超过该阈值时，暂停出款并进入人工审核。" />
+            <Field ruleKey="dailyAmountThreshold" label="单日累计提现人工审核阈值" unit="奈拉" range={[1, 10_000_000]} hint="用户在平台运营时区的自然日内累计提现金额超过该阈值时，暂停出款并进入人工审核。" />
+          </div>
+        </section>
+
+        <section className="p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[19px] text-indigo-600">query_stats</span>
+            <h3 className="text-sm font-bold text-slate-800">频次异常类</h3>
+          </div>
+          <div className="max-w-4xl rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-4">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-3 text-sm font-medium text-slate-700">
+              <span>在过去</span>
+              <FrequencyInput ruleKey="frequencyWindowHours" unit="小时" range={[1, 168]} ariaLabel="统计窗口（小时）" />
+              <span>内，累计发起达到</span>
+              <FrequencyInput ruleKey="frequencyLimit" unit="次" range={[1, 100]} ariaLabel="累计申请次数" />
+              <span>提现申请时，暂停出款并进入人工审核。</span>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">按滚动时间窗口统计，不按固定整点或自然日重置。</p>
+          </div>
+          <p className="mt-5 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">仅统计用户主动发起的提现申请，包含审核拒绝和用户撤销；不包含系统重试及运营补单。</p>
+        </section>
+      </div>
+    </section>
+  );
+};
 
 export const RulesConfigView: React.FC<{
   initialCategory?: RuleCategory;
@@ -165,7 +491,7 @@ export const RulesConfigView: React.FC<{
             </div>
             <h1 className="text-2xl font-black text-white tracking-tight">规则配置中心</h1>
             <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
-              统一管理 5 大核心业务规则：<strong className="text-amber-300">报价规则 ｜ Card Check规则 ｜ 风控规则 ｜ SLA规则 ｜ 损失规则</strong>。每次规则修改严谨记录：<strong className="text-emerald-300">旧值 → 新值 → 修改人 → 原因 → 生效时间</strong>。
+              统一管理 7 大核心业务规则：<strong className="text-amber-300">报价规则 ｜ Card Check规则 ｜ 做卡规则 ｜ 提现规则 ｜ 风控规则 ｜ SLA规则 ｜ 损失规则</strong>。每次规则修改严谨记录：<strong className="text-emerald-300">旧值 → 新值 → 修改人 → 原因 → 生效时间</strong>。
             </p>
           </div>
 
@@ -185,6 +511,8 @@ export const RulesConfigView: React.FC<{
           {[
             { id: 'quote', label: '报价规则', icon: 'trending_up', badge: '价差/波动/熔断' },
             { id: 'card_check', label: 'Card Check 规则', icon: 'verified_user', badge: '查验源/超时/策略' },
+            { id: 'card_making', label: '做卡规则', icon: 'credit_card', badge: '派单/时限/抢单' },
+            { id: 'withdrawal', label: '提现规则', icon: 'account_balance_wallet', badge: '金额/频次/审核' },
             { id: 'risk', label: '风控规则', icon: 'security', badge: '重复/余额/状态/加权' },
             { id: 'sla', label: 'SLA 规则', icon: 'timer', badge: '客服/商户/时限' },
             { id: 'loss', label: '损失规则', icon: 'payments', badge: '阈值/审批级别' }
@@ -215,8 +543,14 @@ export const RulesConfigView: React.FC<{
         </div>
       </section>
 
-      {/* Rules Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+      {activeCategory === 'card_making' ? (
+        <CardMakingRulesPanel onSaved={showToast} />
+      ) : activeCategory === 'withdrawal' ? (
+        <WithdrawalRulesPanel onSaved={showToast} />
+      ) : (
+        <>
+          {/* Rules Table */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
           <div className="font-bold text-xs text-slate-800">
             {activeCategory === 'quote' ? '报价监控与自动调价策略' :
@@ -283,10 +617,10 @@ export const RulesConfigView: React.FC<{
             ))}
           </tbody>
         </table>
-      </div>
+          </div>
 
-      {/* 规则修改全景审计履历 (六十三条核心要求: 旧值 → 新值 → 修改人 → 原因 → 生效时间) */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          {/* 规则修改全景审计履历 (六十三条核心要求: 旧值 → 新值 → 修改人 → 原因 → 生效时间) */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <span className="material-symbols-outlined text-amber-400 text-lg">history_edu</span>
@@ -348,7 +682,9 @@ export const RulesConfigView: React.FC<{
             </tbody>
           </table>
         </div>
-      </div>
+          </div>
+        </>
+      )}
 
       {/* Edit Rule Modal */}
       {editingRule && (

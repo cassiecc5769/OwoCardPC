@@ -99,6 +99,30 @@ export const CardConfigView: React.FC<CardConfigViewProps> = ({ onNavigate }) =>
     });
   };
 
+  // 切换抢单模式，仅影响该卡种是否参与自动抢单。
+  const handleToggleGrabOrder = (id: string) => {
+    setCards((prev) =>
+      prev.map((card) => {
+        if (card.id !== id) return card;
+        const enabled = !(card.grabOrderEnabled ?? true);
+        showToast(`卡种 [${card.brandName}] 已${enabled ? '开启' : '关闭'}抢单模式`);
+        return { ...card, grabOrderEnabled: enabled };
+      })
+    );
+  };
+
+  // 上下架独立于原有收卡通道状态，用于控制前台可见性。
+  const handleToggleListing = (id: string) => {
+    setCards((prev) =>
+      prev.map((card) => {
+        if (card.id !== id) return card;
+        const listed = !(card.listed ?? card.status === 'active');
+        showToast(`卡种 [${card.brandName}] 已${listed ? '上架' : '下架'}`);
+        return { ...card, listed };
+      })
+    );
+  };
+
   // 批量修改状态
   const handleBatchStatus = (targetStatus: 'active' | 'maintenance', reason: string) => {
     const idsToUpdate = selectedIds.length > 0 ? selectedIds : cards.map((c) => c.id);
@@ -157,7 +181,7 @@ export const CardConfigView: React.FC<CardConfigViewProps> = ({ onNavigate }) =>
       operator: '超级管理员 (OP-01)',
       targetSku: savedCard.id,
       action: exists ? '卡种主配置变更' : '新增卡种品牌入库',
-      details: `更新面值模型及正则规则 [${savedCard.regexRule}]`,
+      details: `更新面值模型及录入要素规则（${savedCard.entryElements?.length || 0} 个要素）`,
       hash: savedCard.auditHash,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
@@ -189,12 +213,9 @@ export const CardConfigView: React.FC<CardConfigViewProps> = ({ onNavigate }) =>
     }, 600);
   };
 
-  // 握手探针重连
+  // 保存失败审核设置
   const handleAttemptReconnect = (cardId: string) => {
-    showToast(`已向上游 [${cardId}] 网关发起握手探针，正在测试核销端连通性...`);
-    setTimeout(() => {
-      showToast(`上游网关连通性校验通过，延迟 142ms，通道正常`);
-    }, 1200);
+    showToast(`卡种 [${cardId}] 的失败审核设置已保存并即时生效`);
   };
 
   // 过滤后的列表
@@ -292,7 +313,7 @@ export const CardConfigView: React.FC<CardConfigViewProps> = ({ onNavigate }) =>
             className="h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
           >
             <span className="material-symbols-outlined text-[17px]">add</span>
-            <span>新增卡种品牌</span>
+            <span>新增卡种</span>
           </button>
         </div>
       </header>
@@ -321,32 +342,20 @@ export const CardConfigView: React.FC<CardConfigViewProps> = ({ onNavigate }) =>
       {/* Main Data Table Container */}
       <CardConfigTable
         cards={filteredCards}
-        selectedIds={selectedIds}
-        onToggleSelect={(id) =>
-          setSelectedIds((prev) =>
-            prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-          )
-        }
-        onSelectAll={(all) =>
-          setSelectedIds(all ? filteredCards.map((c) => c.id) : [])
-        }
-        onToggleStatus={handleToggleStatus}
+        onToggleGrabOrder={handleToggleGrabOrder}
+        onToggleListing={handleToggleListing}
         onOpenDetail={(card) => {
           setEditingCard(card);
           setIsDetailModalOpen(true);
         }}
-        onOpenLadder={(card) => {
+        onOpenRules={(card) => {
           setLadderCard(card);
           setIsLadderModalOpen(true);
         }}
-        onOpenChannelLog={(card) => {
+        onOpenFailureAudit={(card) => {
           setChannelLogCard(card);
           setIsChannelLogOpen(true);
         }}
-        includeInactive={filters.includeInactive}
-        onToggleIncludeInactive={(val) =>
-          setFilters((prev) => ({ ...prev, includeInactive: val }))
-        }
         onOpenColumnSettings={() => setIsColumnSettingsOpen(true)}
       />
 

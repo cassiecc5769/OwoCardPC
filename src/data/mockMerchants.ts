@@ -132,13 +132,14 @@ export const INITIAL_MERCHANTS: MerchantItem[] = [
   {
     id: '1',
     mid: 'MID-M0192',
-    name: '招财进宝科技',
+    name: '招财进宝',
     fullName: '招财进宝互娱科技有限公司',
     initial: '招',
     colorClass: 'bg-blue-600',
     legalPerson: '薛晓东',
     phone: '+86 138****8821',
     email: 'xuexiaodong@zhaocai-card.com',
+    remark: '优先承接美国区大额礼品卡。',
     vipTag: 'Tier-S 战略自营',
     tier: 'Tier-S 战略自营',
     tierCode: 'S',
@@ -183,6 +184,28 @@ export const INITIAL_MERCHANTS: MerchantItem[] = [
     collateralPenaltyCount: 0,
     disputeCount: 0,
     capabilityRules: SAMPLE_CAPABILITY_RULES,
+    processingRuleConfigs: [
+      {
+        cardName: 'Apple US/UK',
+        allowException: true,
+        selfDelayEnabled: true,
+        selfDelayMinutes: 15,
+        durationRules: [
+          { id: 'apple-general', countries: ['不限'], cardHeads: ['不限'], cardTypes: ['ECode', 'Physical'], speeds: ['不限'], denominationTypes: ['范围面值'], rangeMin: 25, rangeMax: 500, processingDurationSec: 0, afterSalesDurationMin: 10, isActive: true, updatedAt: '2026-10-14 15:30', createdAt: '2026-10-14 15:30' },
+          { id: 'apple-us-4', countries: ['美国'], cardHeads: ['4xxx'], cardTypes: ['ECode'], speeds: ['快卡'], denominationTypes: ['倍数面值'], multipleBase: 5, multipleMin: 1, multipleMax: 500, processingDurationSec: 30, afterSalesDurationMin: 15, isActive: false, updatedAt: '2026-10-14 16:10', createdAt: '2026-10-14 16:10' },
+          { id: 'apple-uk-7', countries: ['英国'], cardHeads: ['7xxx'], cardTypes: ['Physical'], speeds: ['慢卡'], denominationTypes: ['指定面值'], specifiedValues: '200/400/500', processingDurationSec: 45, afterSalesDurationMin: 0, isActive: true, updatedAt: '2026-10-14 17:20', createdAt: '2026-10-14 17:20' }
+        ]
+      },
+      {
+        cardName: 'Steam GL',
+        allowException: false,
+        selfDelayEnabled: false,
+        selfDelayMinutes: 10,
+        durationRules: [
+          { id: 'steam-general', countries: ['不限'], cardHeads: ['不限'], cardTypes: ['ECode'], speeds: ['不限'], denominationTypes: ['指定面值'], specifiedValues: '200/400/500', processingDurationSec: 60, afterSalesDurationMin: 10, isActive: true, updatedAt: '2026-10-13 11:20', createdAt: '2026-10-13 11:20' }
+        ]
+      }
+    ],
     recentTrades: [
       { id: 'ORD-260825-9104', card: 'Apple Card (US)', currency: 'USD', faceValue: 500.00, rate: 7.185, duration: '24s', durationHighlight: true, settleCny: 3592.50, seat: 'NODE-01 (自动)', status: '秒级已核销' },
       { id: 'ORD-260825-9103', card: 'Steam Wallet (EUR)', currency: 'EUR', faceValue: 200.00, rate: 7.820, duration: '36s', settleCny: 1564.00, seat: '工号 #804 (李成)', status: '人工完成' },

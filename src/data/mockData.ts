@@ -58,6 +58,9 @@ export const INITIAL_USERS: UserItem[] = [
     daysActive: 186,
     registeredDate: '2025-11-04 09:18:22',
     email: 'adebayo.trader@alhikma.ng',
+    registrationMethod: 'email',
+    userWhatsAppNumbers: ['+234 803 555 2892', '+234 701 622 4119'],
+    operatorWhatsAppNumbers: ['+234 905 733 1480'],
     location: '尼日利亚 (Lagos, Ikeja Hub)',
     deviceModel: 'Apple iPhone 15 Pro Max (iOS 17.5.1 / App v3.4.1)',
     lastIp: '102.89.44.112 (尼日利亚 拉各斯 莱基半岛 MTN固定商用专线)',
@@ -75,7 +78,24 @@ export const INITIAL_USERS: UserItem[] = [
       }
     ],
     transactions: [
-      { id: 'ORD-20260827-0841', card: 'Apple $500 × 2张', amount: 6820, time: '14分钟前', status: '已核销打款', rate: '0.9200' },
+      {
+        id: 'AAPP0JR6NB',
+        card: 'Apple $200 × 2张',
+        amount: 346.50,
+        time: '2026/10/15 09:44:24',
+        status: '处理成功',
+        rate: '7.0000',
+        orderNo: 'AAPP0JR6NB',
+        cardName: '苹果卡',
+        country: 'US美国',
+        faceValueQuantity: '200x2张',
+        quote: '₦1386.0000/¥7.0000',
+        totalAmount: '₦69300.00/¥346.50',
+        reward: '₦138.60/¥0.69',
+        settlementTotal: '₦69439/¥347.19',
+        orderTime: '2026/10/15 09:44:24',
+        processingStatus: '处理成功'
+      },
       { id: 'ORD-20260826-1402', card: 'Steam UK £100 × 5张', amount: 4310, time: '昨天 18:40', status: '已核销打款', rate: '0.8620' },
       { id: 'ORD-20260824-0091', card: 'Apple $1,000 × 3张', amount: 20460, time: '08-24 16:15', status: '已核销打款', rate: '0.9300' },
       { id: 'ORD-20260821-0982', card: 'Vanilla Visa $400', amount: 2840, time: '08-21 11:20', status: '已核销打款', rate: '0.8875' }

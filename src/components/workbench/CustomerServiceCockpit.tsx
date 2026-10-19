@@ -14,6 +14,7 @@ interface CustomerServiceCockpitProps {
 // 8. 卡单作业数据结构与状态定义
 // ============================================================================
 export type OrderOperationalStatus =
+  | 'card_info_anomaly' // 卡单信息异常（OCR 预检拦截，待客服人工判断）
   | 'pending_claim' // 无商户接卡
   | 'merchant_reported_anomaly' // 商户提交异常
   | 'manual_recalled_pending' // 已撤回·待处理
@@ -31,6 +32,7 @@ export type OrderOperationalStatus =
 
 export type OrderFilterTab =
   | 'all_pending' // 全部待处理
+  | 'card_info_anomaly' // 卡单信息异常
   | 'failed_pending_audit' // 失败待审核
   | 'pending_claim' // 无商户接卡
   | 'merchant_reported_anomaly' // 商户提交异常
@@ -56,20 +58,6 @@ export const getUserLevelBadgeClass = (level?: string) => {
     default:
       return 'bg-slate-100 text-slate-600 border border-slate-200/60';
   }
-};
-
-/**
- * 格式化简洁等待时长 (mm:ss，超过1小时展示 hh:mm:ss)
- */
-export const formatConciseDuration = (seconds: number) => {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  if (m >= 60) {
-    const h = Math.floor(m / 60);
-    const remM = m % 60;
-    return `${String(h).padStart(2, '0')}:${String(remM).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  }
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
 /**
@@ -556,8 +544,9 @@ export interface CardOrderTask {
   status: OrderOperationalStatus;
   statusLabel: string;
   auditReviewer?: string; // 审核人 (用于失败待审核状态展示)
-  entryReason: 'normal_manual' | 'auto_failed' | 'risk_unconfirmed' | 'merchant_anomaly' | 'dispute';
+  entryReason: 'normal_manual' | 'auto_failed' | 'risk_unconfirmed' | 'merchant_anomaly' | 'card_info_anomaly' | 'dispute';
   entryReasonLabel: string; // 进入条件说明
+  systemRecognitionConclusion?: string; // OCR/图像识别结论，仅供客服悬浮查看
   waitingDurationSeconds: number; // 等待时间 (当前节点)
   slaRemainingSeconds: number; // SLA 剩余秒数 (负数为超时)
   slaTotalSeconds: number;
@@ -3070,6 +3059,80 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
   // ============================================================================
   const [orderTasks, setOrderTasks] = useState<CardOrderTask[]>([
     {
+      id: 'AIMG4839US',
+      user: { userId: 'US93IMG84', name: 'Mia_Gift', level: 'V3', creditScore: 90, phoneOrEmail: '+1 312****0478' },
+      cardType: 'Apple Gift Card',
+      cardTypeIcon: 'apple',
+      cardFullName: '苹果/Apple&iTunes',
+      mediaTypeLabel: '卡图',
+      speedTag: '普通卡',
+      cardQuantity: 3,
+      userDealQuote: '￥7.0200/₦1390',
+      merchantQuote: '￥8.0200',
+      country: 'US',
+      countryName: '美国',
+      countryFlag: '🇺🇸',
+      faceValue: 100,
+      declaredAmount: 249.0,
+      currency: 'USD',
+      cardCheckResult: { status: 'invalid', label: '卡图识别无效', checkTime: '14:41:08', provider: 'OCR 图像预检' },
+      riskTags: ['OCR识别异常', '疑似自拍卡图'],
+      isRiskAnomaly: true,
+      currentMerchant: null,
+      status: 'card_info_anomaly',
+      statusLabel: '卡单信息异常',
+      entryReason: 'card_info_anomaly',
+      entryReasonLabel: 'OCR 预检拦截，未进入派单流程',
+      systemRecognitionConclusion: '疑似自拍卡图，卡面关键信息无法稳定识别，不符合卡图提交要求。',
+      waitingDurationSeconds: 0,
+      slaRemainingSeconds: 9999,
+      slaTotalSeconds: 0,
+      slaStatus: 'normal',
+      systemAdvice: '请客服人工核验卡图；确认可处理后可直接处理或人工派单。',
+      cardDetails: { cardCode: 'AP-US-4839-1972-0056', ocrConfidence: 42.6, imageUrl: 'DOC_PROOF_SHA256_88931', imageReflections: true },
+      assignedCs: { id: 'cs_qq', name: '青青', email: '989898@163.com', label: '青青(989898@163.com)' },
+      historyLogs: [
+        { time: '14:41:08', operator: 'OCR 图像预检', action: '识别结论：疑似自拍卡图，拦截进入客服人工队列' },
+      ],
+    },
+    {
+      id: 'AGIF7026UK',
+      user: { userId: 'UK74GFT22', name: 'Noah_Store', level: 'V2', creditScore: 86, phoneOrEmail: '+44 74****2016' },
+      cardType: 'Amazon Gift Card',
+      cardTypeIcon: 'shopping_bag',
+      cardFullName: '亚马逊/Amazon',
+      mediaTypeLabel: '卡图',
+      speedTag: '快卡',
+      cardQuantity: 1,
+      userDealQuote: '￥8.1500/₦1610',
+      merchantQuote: '￥9.3000',
+      country: 'UK',
+      countryName: '英国',
+      countryFlag: '🇬🇧',
+      faceValue: 50,
+      declaredAmount: 41.0,
+      currency: 'GBP',
+      cardCheckResult: { status: 'invalid', label: '卡图识别无效', checkTime: '14:37:42', provider: 'OCR 图像预检' },
+      riskTags: ['OCR识别异常'],
+      isRiskAnomaly: true,
+      currentMerchant: null,
+      status: 'card_info_anomaly',
+      statusLabel: '卡单信息异常',
+      entryReason: 'card_info_anomaly',
+      entryReasonLabel: 'OCR 预检拦截，未进入派单流程',
+      systemRecognitionConclusion: '卡图边缘遮挡且卡面反光严重，无法完成有效卡面信息识别。',
+      waitingDurationSeconds: 0,
+      slaRemainingSeconds: 9999,
+      slaTotalSeconds: 0,
+      slaStatus: 'normal',
+      systemAdvice: '请客服人工核验卡图，并按现有直接处理流程完成后续处置。',
+      cardDetails: { cardCode: 'AMZ-UK-7026-8821-1008', ocrConfidence: 51.3, imageUrl: 'DOC_PROOF_SHA256_88932', imageReflections: true },
+      assignedCs: { id: 'cs_dff', name: '大飞飞', email: '3456@163.com', label: '大飞飞(3456@163.com)' },
+      historyLogs: [
+        { time: '14:37:42', operator: 'OCR 图像预检', action: '识别结论：卡面反光及遮挡，拦截进入客服人工队列' },
+      ],
+    },
+    {
       id: 'AAPP08GW7Z',
       user: { userId: 'USNEO3N9Z', name: 'Alex_VipCard', level: 'V4', creditScore: 98, phoneOrEmail: '+1 626***8819' },
       cardType: 'Apple Gift Card',
@@ -3866,7 +3929,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
   ]);
 
   // ============================================================================
-  // 8. 卡单过滤与智能排序：严格遵照「已超时 → 即将超时 → 高风险 → 等待时间长」
+  // 8. 卡单过滤与智能排序：信息异常优先，其余按既有作业优先级排序
   // ============================================================================
   const sortedAndFilteredOrders = useMemo(() => {
     // 8.3 全部卡单逻辑：默认不展示卡单内容，需要卡单号进行精准搜索后才展示
@@ -3881,12 +3944,14 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
     return orderTasks
       .filter(task => {
         // Tab 过滤
+        if (orderFilterTab === 'card_info_anomaly') return task.status === 'card_info_anomaly';
         if (orderFilterTab === 'pending_claim') return task.status === 'pending_claim';
         if (orderFilterTab === 'failed_pending_audit') return task.status === 'failed_pending_audit' && isAssignedToCurrentCustomerService(task);
         if (orderFilterTab === 'merchant_reported_anomaly') return task.status === 'merchant_reported_anomaly';
         if (orderFilterTab === 'manual_recalled_pending') return task.status === 'manual_recalled_pending';
-        // 全部待处理: 卡单状态仅为 无商户接卡、商户提交异常、已撤回·待处理，其他状态不能出现在全部待处理中
+        // 全部待处理：包含所有需要客服介入的未闭环卡单
         return (
+          task.status === 'card_info_anomaly' ||
           task.status === 'pending_claim' ||
           task.status === 'merchant_reported_anomaly' ||
           task.status === 'manual_recalled_pending'
@@ -3912,23 +3977,29 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
         if (aOverdue && !bOverdue) return -1;
         if (!aOverdue && bOverdue) return 1;
 
-        // 2. 商户提交异常优先排前（需要客服仲裁与止损）
+        // 2. OCR 卡单信息异常优先（尚未进入派单，需人工判断）
+        const aCardInfoAnomaly = a.status === 'card_info_anomaly';
+        const bCardInfoAnomaly = b.status === 'card_info_anomaly';
+        if (aCardInfoAnomaly && !bCardInfoAnomaly) return -1;
+        if (!aCardInfoAnomaly && bCardInfoAnomaly) return 1;
+
+        // 3. 商户提交异常优先排前（需要客服仲裁与止损）
         const aAnomaly = a.status === 'merchant_reported_anomaly';
         const bAnomaly = b.status === 'merchant_reported_anomaly';
         if (aAnomaly && !bAnomaly) return -1;
         if (!aAnomaly && bAnomaly) return 1;
 
-        // 3. 即将超时 (slaStatus === 'warning')
+        // 4. 即将超时 (slaStatus === 'warning')
         const aSoon = a.status === 'overdue_soon' || a.slaStatus === 'warning';
         const bSoon = b.status === 'overdue_soon' || b.slaStatus === 'warning';
         if (aSoon && !bSoon) return -1;
         if (!aSoon && bSoon) return 1;
 
-        // 4. 高风险优先
+        // 5. 高风险优先
         if (a.isRiskAnomaly && !b.isRiskAnomaly) return -1;
         if (!a.isRiskAnomaly && b.isRiskAnomaly) return 1;
 
-        // 5. 等待时间长优先 (waitingDurationSeconds 越大排越前)
+        // 6. 既有作业队列仍按等待时长排序（列表不展示该字段）
         return b.waitingDurationSeconds - a.waitingDurationSeconds;
       });
   }, [orderTasks, orderFilterTab, orderSearchQuery]);
@@ -4322,7 +4393,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
         <div className="flex flex-col gap-4">
           {/* 8.3 页面 Tab 与搜索条 */}
           <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs">
-            {/* 8.3 客服卡单作业 5 个状态筛选 Tab */}
+            {/* 8.3 客服卡单作业状态筛选 Tab */}
             <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
               {/* 1. 全部待处理 */}
               <button
@@ -4333,10 +4404,28 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200/80'
                 }`}
               >
-                全部待处理 ({orderTasks.filter(o => o.status === 'pending_claim' || o.status === 'merchant_reported_anomaly' || o.status === 'manual_recalled_pending').length})
+                全部待处理 ({orderTasks.filter(o => o.status === 'card_info_anomaly' || o.status === 'pending_claim' || o.status === 'merchant_reported_anomaly' || o.status === 'manual_recalled_pending').length})
               </button>
 
-              {/* 2. 失败待审核 */}
+              {/* 2. 卡单信息异常：OCR 预检拦截，不进入派单流程 */}
+              <button
+                onClick={() => setOrderFilterTab('card_info_anomaly')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  orderFilterTab === 'card_info_anomaly'
+                    ? 'bg-orange-600 text-white shadow-2xs font-bold'
+                    : 'bg-orange-50 text-orange-800 border border-orange-200 hover:bg-orange-100'
+                }`}
+              >
+                <MaterialIcon name="error" size={14} />
+                <span>卡单信息异常</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  orderFilterTab === 'card_info_anomaly' ? 'bg-white text-orange-700' : 'bg-orange-200 text-orange-900'
+                }`}>
+                  {orderTasks.filter(o => o.status === 'card_info_anomaly').length}
+                </span>
+              </button>
+
+              {/* 3. 失败待审核 */}
               <button
                 onClick={() => setOrderFilterTab('failed_pending_audit')}
                 className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
@@ -4354,7 +4443,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                 </span>
               </button>
 
-              {/* 3. 无商户接卡 */}
+              {/* 4. 无商户接卡 */}
               <button
                 onClick={() => setOrderFilterTab('pending_claim')}
                 className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
@@ -4372,7 +4461,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                 </span>
               </button>
 
-              {/* 3. 商户提交异常 */}
+              {/* 5. 商户提交异常 */}
               <button
                 onClick={() => setOrderFilterTab('merchant_reported_anomaly')}
                 className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
@@ -4390,7 +4479,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                 </span>
               </button>
 
-              {/* 4. 已撤回·待处理 */}
+              {/* 6. 已撤回·待处理 */}
               <button
                 onClick={() => setOrderFilterTab('manual_recalled_pending')}
                 className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
@@ -4408,7 +4497,7 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                 </span>
               </button>
 
-              {/* 5. 全部卡单 */}
+              {/* 7. 全部卡单 */}
               <button
                 onClick={() => setOrderFilterTab('all_orders')}
                 className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -4460,19 +4549,18 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                     <th className="py-2.5 px-3 min-w-[120px]">卡单号</th>
                     <th className="py-2.5 px-3 min-w-[140px]">用户</th>
                     <th className="py-2.5 px-3 min-w-[180px]">卡种信息</th>
-                    <th className="py-2.5 px-3 min-w-[130px]">面额/数量</th>
+                    <th className="py-2.5 px-3 min-w-[140px]">单卡面额/数量</th>
                     <th className="py-2.5 px-3 min-w-[210px]">报价</th>
                     <th className="py-2.5 px-3 min-w-[120px]">当前商户</th>
-                    <th className="py-2.5 px-3 min-w-[170px]">卡单处理人</th>
-                    <th className="py-2.5 px-3 w-24">当前状态</th>
-                    <th className="py-2.5 px-3 min-w-[110px]">等待时间</th>
+                    <th className="py-2.5 px-3 min-w-[130px]">卡单处理人</th>
+                    <th className="py-2.5 px-3 min-w-[150px] sticky right-[156px] z-20 bg-slate-50/90 shadow-[-6px_0_8px_-4px_rgba(0,0,0,0.06)]">当前状态</th>
                     <th className="py-2.5 px-3 w-[156px] min-w-[156px] text-center sticky right-0 bg-slate-50 z-20 shadow-[-6px_0_8px_-4px_rgba(0,0,0,0.06)] whitespace-nowrap">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {sortedAndFilteredOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="py-12 text-center text-slate-400">
+                      <td colSpan={9} className="py-12 text-center text-slate-400">
                         {orderFilterTab === 'all_orders' ? (
                           !orderSearchQuery.trim() ? (
                             <div className="flex flex-col items-center justify-center max-w-lg mx-auto py-6 text-center">
@@ -4485,9 +4573,10 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                               </p>
                               {/* 快捷填入示例 */}
                               <div className="mt-4 flex flex-col items-center gap-2">
-                                <span className="text-[11px] text-slate-400 font-medium">点击单号快捷填入体验 9 种状态：</span>
+                                <span className="text-[11px] text-slate-400 font-medium">点击单号快捷填入体验不同卡单状态：</span>
                                 <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-lg">
                                   {[
+                                    { id: 'AIMG4839US', label: '卡单信息异常' },
                                     { id: 'ASTE99KLP1', label: '无商户接卡' },
                                     { id: 'ASTE8821DE', label: '商户提交异常' },
                                     { id: 'AGOO9912US', label: '已撤回·待处理' },
@@ -4531,7 +4620,9 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                               </button>
                             </div>
                           )
-                        ) : orderFilterTab === 'merchant_reported_anomaly'
+                        ) : orderFilterTab === 'card_info_anomaly'
+                          ? '当前暂无卡单信息异常，OCR 预检识别正常！'
+                          : orderFilterTab === 'merchant_reported_anomaly'
                           ? '当前暂无商户提交异常卡单，商户核销运行平稳！'
                           : orderFilterTab === 'manual_recalled_pending'
                           ? '当前暂无已撤回待处理卡单！'
@@ -4631,14 +4722,20 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                             </div>
                           </td>
 
-                          {/* 面额/数量 (去掉货币单位: 面值: 500 / 卡数量: 1) */}
+                          {/* 单卡面额/数量：多卡时突出数量，便于人工判断 */}
                           <td className="py-3 px-3 font-mono">
-                            <div className="flex flex-col">
+                            <div className="flex items-center gap-1.5 whitespace-nowrap">
                               <span className="font-bold text-slate-900">
-                                面值: {task.faceValue}
+                                {task.currency} {task.faceValue}
                               </span>
-                              <span className="text-[11px] text-slate-500 font-medium mt-0.5">
-                                卡数量: {task.cardQuantity ?? 1}
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${
+                                  (task.cardQuantity ?? 1) > 1
+                                    ? 'bg-orange-100 text-orange-800 ring-1 ring-orange-200'
+                                    : 'bg-slate-100 text-slate-600'
+                                }`}
+                              >
+                                × {task.cardQuantity ?? 1}
                               </span>
                             </div>
                           </td>
@@ -4700,8 +4797,8 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                               return (
                                 <div className="flex flex-col justify-center">
                                   <div className="flex items-center gap-1">
-                                    <span className="text-xs text-slate-800 font-medium truncate max-w-[145px]" title={handler.label}>
-                                      {handler.label}
+                                    <span className="text-xs text-slate-800 font-medium truncate max-w-[110px]" title={handler.name}>
+                                      {handler.name}
                                     </span>
                                     <button
                                       type="button"
@@ -4722,51 +4819,49 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                             })()}
                           </td>
 
-                          {/* 当前状态 (5.1 状态胶囊) */}
-                          <td className="py-3 px-3">
-                            <StatusBadge
-                              status={
-                                task.status === 'merchant_reported_anomaly' ? 'danger' :
-                                task.status === 'manual_recalled_pending' ? 'warning' :
-                                task.status === 'waiting_merchant_claim' ? 'warning' :
-                                task.status === 'waiting_merchant_process' ? 'info' :
-                                task.status === 'after_sale' ? 'dispute' :
-                                task.status === 'failed_pending_audit' ? 'danger' :
-                                task.status === 'completed' ? 'success' :
-                                task.status === 'failed' ? 'danger' :
-                                task.status === 'processing' ? 'info' :
-                                task.status === 'pending_confirm' ? 'warning' :
-                                task.status === 'dispute' ? 'dispute' :
-                                task.status === 'overdue_soon' ? 'warning' : 'neutral'
-                              }
-                              label={task.statusLabel}
-                              dot
-                            />
-                          </td>
-
-                          {/* 等待时间 (第1行: 持续等待时间 简洁格式 03:20，无图标 / 第2行: 超时180s 或 剩余45s 纯秒数，不需要图标和背景图，只需要展示具体值加个颜色即可) */}
-                          <td className="py-3 px-3">
-                            <div className="flex flex-col justify-center font-mono">
-                              {/* 第一行: 持续等待时间 (简洁格式 03:20，去掉图标) */}
-                              <span className="text-slate-800 font-semibold text-xs">
-                                {formatConciseDuration(task.waitingDurationSeconds)}
-                              </span>
-                              {/* 第二行: 超时/剩余 (纯秒数，不需要图标和背景图，只需要展示具体值加个颜色即可) */}
-                              <div className="mt-1">
-                                {isOverdue ? (
-                                  <span className="text-[11px] font-semibold text-rose-600 font-mono whitespace-nowrap leading-none">
-                                    超时 {Math.abs(task.slaRemainingSeconds)}s
-                                  </span>
-                                ) : isSoon ? (
-                                  <span className="text-[11px] font-semibold text-amber-600 font-mono whitespace-nowrap leading-none">
-                                    剩余 {task.slaRemainingSeconds}s
-                                  </span>
-                                ) : (
-                                  <span className="text-[11px] font-medium text-emerald-600 font-mono whitespace-nowrap leading-none">
-                                    剩余 {task.slaRemainingSeconds}s
+                          {/* 当前状态：信息异常展示识别结论悬浮提示 */}
+                          <td className={`py-3 px-3 sticky right-[156px] z-20 shadow-[-6px_0_8px_-4px_rgba(0,0,0,0.06)] ${
+                            isOverdue
+                              ? 'bg-rose-50/95'
+                              : isSoon
+                              ? 'bg-amber-50/95'
+                              : 'bg-white'
+                          }`}>
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1.5">
+                                <StatusBadge
+                                  status={
+                                    task.status === 'card_info_anomaly' || task.status === 'merchant_reported_anomaly' ? 'danger' :
+                                    task.status === 'manual_recalled_pending' ? 'warning' :
+                                    task.status === 'waiting_merchant_claim' ? 'warning' :
+                                    task.status === 'waiting_merchant_process' ? 'info' :
+                                    task.status === 'after_sale' ? 'dispute' :
+                                    task.status === 'failed_pending_audit' ? 'danger' :
+                                    task.status === 'completed' ? 'success' :
+                                    task.status === 'failed' ? 'danger' :
+                                    task.status === 'processing' ? 'info' :
+                                    task.status === 'pending_confirm' ? 'warning' :
+                                    task.status === 'dispute' ? 'dispute' :
+                                    task.status === 'overdue_soon' ? 'warning' : 'neutral'
+                                  }
+                                  label={task.statusLabel}
+                                  dot
+                                />
+                                {task.status === 'card_info_anomaly' && task.systemRecognitionConclusion && (
+                                  <span className="group relative inline-flex shrink-0">
+                                    <MaterialIcon name="error" size={16} className="text-orange-500 cursor-help" />
+                                    <span className="pointer-events-none invisible absolute bottom-full left-1/2 z-30 mb-2 w-60 -translate-x-1/2 rounded-lg bg-slate-900 px-2.5 py-2 text-[11px] font-normal leading-relaxed text-white opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100">
+                                      <span className="mb-0.5 block font-semibold text-orange-200">系统识别结论</span>
+                                      {task.systemRecognitionConclusion}
+                                    </span>
                                   </span>
                                 )}
                               </div>
+                              {task.status === 'card_info_anomaly' && (
+                                <span className="truncate text-[10px] font-medium text-orange-700" title={`异常原因：${task.cardCheckResult.label}`}>
+                                  异常原因：{task.cardCheckResult.label}
+                                </span>
+                              )}
                             </div>
                           </td>
 
@@ -4876,7 +4971,60 @@ export const CustomerServiceCockpit: React.FC<CustomerServiceCockpitProps> = ({
                                 </>
                               )}
 
-                              {/* 2. 商户提交异常 */}
+                              {/* 2. 卡单信息异常：OCR 拦截单仅允许人工后续决策 */}
+                              {task.status === 'card_info_anomaly' && (
+                                <>
+                                  <div className="w-full h-[26px]">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenCardActionModal('directProcess', task)}
+                                      className="w-full h-full rounded bg-purple-600 hover:bg-purple-700 text-white font-medium text-xs shadow-2xs cursor-pointer transition-colors flex items-center justify-center whitespace-nowrap"
+                                    >
+                                      直接处理
+                                    </button>
+                                  </div>
+                                  <div className="relative w-full h-[26px]">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveDropdownOrderId(activeDropdownOrderId === task.id ? null : task.id);
+                                      }}
+                                      className={`w-full h-full rounded border text-xs font-medium cursor-pointer transition-colors flex items-center justify-center gap-0.5 whitespace-nowrap ${
+                                        isDropdownOpen
+                                          ? 'bg-blue-50 text-blue-700 border-blue-300 font-semibold shadow-2xs'
+                                          : 'border-slate-300 hover:bg-slate-100 bg-white text-slate-700'
+                                      }`}
+                                      title="更多操作"
+                                    >
+                                      <span>更多 ▾</span>
+                                    </button>
+                                    {isDropdownOpen && (
+                                      <div
+                                        className={`absolute left-0 ${isNearBottom ? 'bottom-full mb-1' : 'top-full mt-1'} w-40 bg-white rounded-lg shadow-xl border border-slate-200 py-1 z-30 divide-y divide-slate-100 text-left animate-in fade-in zoom-in-95 duration-100`}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <div className="py-0.5">
+                                          <button type="button" onClick={() => handleOpenCardActionModal('dispatch', task)} className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-1.5 cursor-pointer transition-colors">
+                                            <MaterialIcon name="send" size={15} className="text-blue-500" />派单
+                                          </button>
+                                          <button type="button" onClick={() => handleOpenCardActionModal('editCard', task)} className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-1.5 cursor-pointer transition-colors">
+                                            <MaterialIcon name="edit_note" size={15} className="text-indigo-500" />修改卡信息
+                                          </button>
+                                          <button type="button" onClick={() => handleOpenCardActionModal('syncUser', task)} className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-1.5 cursor-pointer transition-colors">
+                                            <MaterialIcon name="sync" size={15} className="text-emerald-500" />同步用户信息
+                                          </button>
+                                          <button type="button" onClick={() => handleOpenCardActionModal('transfer', task)} className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-amber-50 hover:text-amber-700 flex items-center gap-1.5 cursor-pointer transition-colors">
+                                            <MaterialIcon name="swap_horiz" size={15} className="text-amber-500" />转单
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+
+                              {/* 3. 商户提交异常 */}
                               {task.status === 'merchant_reported_anomaly' && (
                                 <>
                                   <div className="w-full h-[26px]">

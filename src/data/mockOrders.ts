@@ -206,6 +206,14 @@ export interface OrderItem {
     result: '核销成功' | '处理中' | '拒单转单' | '超时未接' | '凭证冲突';
   };
 
+  // 做卡处理规则快照：确认接卡时固化，后续规则调整不影响处理中卡单
+  processingRuleSnapshot?: {
+    durationMinutes: number;
+    source: '商户个性化' | '平台默认';
+    deadline: string;
+  };
+  processCompletionSource?: '商户提交成功' | '系统超时自动成功';
+
   financialDetails: {
     tradeAmount: number;
     currency: string;
@@ -351,6 +359,12 @@ export const INITIAL_ORDERS: OrderItem[] = [
       durationSeconds: 22,
       result: '核销成功'
     },
+    processingRuleSnapshot: {
+      durationMinutes: 15,
+      source: '平台默认',
+      deadline: '15:47:15'
+    },
+    processCompletionSource: '商户提交成功',
     financialDetails: {
       tradeAmount: 420.00,
       currency: 'USD',
@@ -549,6 +563,12 @@ export const INITIAL_ORDERS: OrderItem[] = [
       durationSeconds: 1.8,
       result: '核销成功'
     },
+    processingRuleSnapshot: {
+      durationMinutes: 15,
+      source: '平台默认',
+      deadline: '14:52:13'
+    },
+    processCompletionSource: '商户提交成功',
     financialDetails: {
       tradeAmount: 82.50,
       currency: 'USD',
@@ -985,8 +1005,8 @@ export const INITIAL_ORDERS: OrderItem[] = [
     riskStatusLabel: '正常 (无风险)',
     afterSaleStatus: 'none',
     afterSaleStatusLabel: '无售后',
-    duration: '2.3s',
-    durationCode: 'API-FAST',
+    duration: '15m',
+    durationCode: 'TIMEOUT_AUTO_SUCCESS',
     maskedCode: 'AMZ-****-****-0129',
     fullCode: 'AMZ-8812-4412-0129',
     cardCheckDetails: {
@@ -1015,10 +1035,16 @@ export const INITIAL_ORDERS: OrderItem[] = [
       merchantName: '直通专线 #03',
       merchantMid: 'MID-UK-CHANNEL',
       acceptTime: '14:34:03.500',
-      fulfillTime: '14:34:04.400',
-      durationSeconds: 2.3,
+      fulfillTime: '14:49:03.500',
+      durationSeconds: 900,
       result: '核销成功'
     },
+    processingRuleSnapshot: {
+      durationMinutes: 15,
+      source: '平台默认',
+      deadline: '14:49:03.500'
+    },
+    processCompletionSource: '系统超时自动成功',
     financialDetails: {
       tradeAmount: 124.50,
       currency: 'GBP',
@@ -1037,7 +1063,7 @@ export const INITIAL_ORDERS: OrderItem[] = [
       { id: 'LOG-01', time: '14:34:02', operator: '系统网关', fromState: '初始', toState: '已创建', reason: '用户提交卡密', traceId: 'TR-AMZ-01' },
       { id: 'LOG-02', time: '14:34:03', operator: '预检引擎', fromState: '已创建', toState: '预检中', reason: '官方探针校验', traceId: 'TR-AMZ-02' },
       { id: 'LOG-03', time: '14:34:03', operator: '撮合调度', fromState: '预检中', toState: '商户处理中', reason: '秒级撮合至英国专线', traceId: 'TR-AMZ-03' },
-      { id: 'LOG-04', time: '14:34:04', operator: '清算网关', fromState: '商户处理中', toState: '已完成', reason: '商户完成兑付放款', traceId: 'TR-AMZ-04' },
+      { id: 'LOG-04', time: '14:49:03', operator: '系统时限引擎', fromState: '商户处理中', toState: '已完成', reason: '到达平台默认做卡处理截止时间，系统自动处理成功并触发结算放款', traceId: 'TR-AMZ-04' },
     ],
     productTitle: 'Amazon UK 电子代码充值券',
     productCategoryCode: 'AMZN-UK-ECODE',

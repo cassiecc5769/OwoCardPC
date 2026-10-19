@@ -11,12 +11,84 @@ export interface OcrCapabilityBadge {
   type: 'success' | 'info' | 'warning' | 'error' | 'neutral';
 }
 
+export interface TransactionElementGroup {
+  category: '速度' | '介质';
+  values: string[];
+}
+
+export type CardEntryConditionType =
+  | 'fixedLength'
+  | 'lengthRange'
+  | 'characters'
+  | 'prefix'
+  | 'suffix'
+  | 'position'
+  | 'allowedValues'
+  | 'blockedValues';
+
+export type CardEntryCharacterSet = 'digits' | 'letters' | 'alphanumeric' | 'custom';
+
+export interface CardEntryRuleCondition {
+  id: string;
+  type: CardEntryConditionType;
+  value?: string;
+  min?: string;
+  max?: string;
+  position?: string;
+  characterSet?: CardEntryCharacterSet;
+  customCharacters?: string;
+  requireBoth?: boolean;
+}
+
+export interface CardEntryAllowedFormat {
+  id: string;
+  name: string;
+  conditions: CardEntryRuleCondition[];
+}
+
+export interface CardEntryElement {
+  id: string;
+  type: string;
+  name: string;
+  property: '图片' | '文本类';
+  prompt: string;
+  required: boolean;
+  valueRule: '不限' | '限制';
+  allowedFormats?: CardEntryAllowedFormat[];
+  maxImages?: number;
+  allowedImageFormats?: ('JPG' | 'PNG' | 'WebP')[];
+  maxImageSizeMB?: number;
+}
+
+export interface CardSupportedCountry {
+  code: string;
+  name: string;
+  nameEn: string;
+  flag: string;
+  cardHeadEnabled: boolean;
+  cardHeads: string;
+}
+
 export interface CardSkuMasterItem {
   id: string; // e.g. "SKU-APL-US"
+  /** 面向运营展示的卡种编码；未配置时保留兼容旧 SKU 数据。 */
+  cardCode?: string;
   internalId: string; // e.g. "#00841"
   brandName: string; // e.g. "Apple Gift Card"
   subTitle: string; // e.g. "苹果综合充值卡 (美区)"
   category: string; // e.g. "应用/软件", "游戏点卡", "电商购物", "金融预付"
+  transactionElements?: TransactionElementGroup[];
+  quantity?: '单卡' | '多卡';
+  maxCards?: number;
+  entryElements?: CardEntryElement[];
+  logoName?: string;
+  supportCountries?: CardSupportedCountry[];
+  associatedCountries?: string[];
+  commonFaceValues?: number[];
+  otherAttributes?: string[];
+  createdAt?: string;
+  grabOrderEnabled?: boolean;
+  listed?: boolean;
   iconType: 'apple' | 'steam' | 'google' | 'razer' | 'vanilla' | 'amazon' | 'custom';
   iconBg: string;
   iconText?: string;

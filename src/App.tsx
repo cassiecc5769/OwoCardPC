@@ -426,6 +426,8 @@ export default function App() {
             currentPath === 'quote-rules' ||
             currentPath === 'rule-quote' ||
             currentPath === 'rule-card-check' ||
+            currentPath === 'rule-card-making' ||
+            currentPath === 'rule-withdrawal' ||
             currentPath === 'rule-risk' ||
             currentPath === 'rule-sla' ||
             currentPath === 'rule-loss') && (
@@ -433,6 +435,10 @@ export default function App() {
               initialCategory={
                 currentPath === 'rule-card-check'
                   ? 'card_check'
+                  : currentPath === 'rule-card-making'
+                  ? 'card_making'
+                  : currentPath === 'rule-withdrawal'
+                  ? 'withdrawal'
                   : currentPath === 'rule-risk'
                   ? 'risk'
                   : currentPath === 'rule-sla'

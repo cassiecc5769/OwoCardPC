@@ -698,10 +698,10 @@ export const MerchantManagementView: React.FC<MerchantManagementViewProps> = ({
                     className="rounded text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 align-middle cursor-pointer"
                   />
                 </th>
-                <th className="px-4 min-w-[220px]">商户名称与唯一编号</th>
+                <th className="px-4 min-w-[220px]">商户名称与唯一编码</th>
                 <th className="px-3 min-w-[110px]">经营等级</th>
                 <th className="px-3 min-w-[110px]">实时接单状态</th>
-                <th className="px-4 min-w-[210px]">核心支持卡类</th>
+                <th className="px-4 min-w-[210px]">经营卡类</th>
                 <th className="px-4 min-w-[170px] text-right">今日接单 / 核销GMV</th>
                 <th className="px-4 min-w-[180px]">可用积点 / 剩余承揽额</th>
                 <th className="px-3 min-w-[110px] text-center">30天成功率</th>
@@ -726,8 +726,17 @@ export const MerchantManagementView: React.FC<MerchantManagementViewProps> = ({
               ) : (
                 filteredMerchants.map(merchant => {
                   const isSelected = selectedRowIds.includes(merchant.id);
-                  const isPaused = merchant.status === '打烊暂停中' || merchant.status === '暂停接单';
-                  const isCircuit = merchant.status === '熔断管制中' || merchant.status === '风控冻结';
+                  const realtimeStatus = merchant.status === '在线接单中' || merchant.status === '正常接卡'
+                    ? '正常'
+                    : merchant.status === '打烊暂停中' || merchant.status === '暂停接单'
+                      ? '暂停接卡(未开启接卡开关)'
+                      : merchant.status === '风控冻结'
+                        ? '已禁用'
+                        : merchant.collateralStatus === '押金告警'
+                          ? '异常(余额不足)'
+                          : '暂停接卡(无有效报价)';
+                  const isPaused = realtimeStatus !== '正常';
+                  const isCircuit = realtimeStatus === '异常(余额不足)' || realtimeStatus === '已禁用';
                   const isWarn = merchant.collateralStatus === '押金告警';
 
                   return (
@@ -757,7 +766,7 @@ export const MerchantManagementView: React.FC<MerchantManagementViewProps> = ({
                           <div className="flex flex-col min-w-0">
                             <div className="flex items-center gap-1.5">
                               <span className="font-bold text-slate-900 group-hover:text-blue-700 transition-colors truncate">
-                                {merchant.fullName}
+                                {merchant.name}
                               </span>
                               {merchant.tier.includes('Tier-S') && (
                                 <span className="material-symbols-outlined text-blue-600 text-[15px]" title="企业已完成四要素实名认证与牌照核验">
@@ -776,9 +785,7 @@ export const MerchantManagementView: React.FC<MerchantManagementViewProps> = ({
                               )}
                             </div>
                             <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400 font-code-token">
-                              <span className="font-semibold text-slate-600">{merchant.mid}</span>
-                              <span>·</span>
-                              <span>主理: {merchant.legalPerson}</span>
+                              <span className="font-semibold text-slate-600">{merchant.id === '1' ? 'GF005001' : merchant.mid}</span>
                             </div>
                           </div>
                         </div>
@@ -786,51 +793,35 @@ export const MerchantManagementView: React.FC<MerchantManagementViewProps> = ({
 
                       {/* Tier */}
                       <td className="px-3">
-                        {merchant.tier.includes('Tier-S') ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600 text-white text-[10px] font-bold tracking-wide">
-                            <span className="material-symbols-outlined text-[12px]">award_star</span>
-                            Tier-S 战略自营
-                          </span>
-                        ) : merchant.tier.includes('Tier-A') ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-600 text-white text-[10px] font-bold tracking-wide">
-                            <span className="material-symbols-outlined text-[12px]">star</span>
-                            Tier-A 核心大商
-                          </span>
-                        ) : merchant.tier.includes('Tier-B') ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-semibold tracking-wide">
-                            Tier-B 标准履约
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold tracking-wide">
-                            Tier-C 重点观察
-                          </span>
-                        )}
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium tracking-wide">
+                          预留字段
+                        </span>
                       </td>
 
                       {/* Status */}
                       <td className="px-3">
-                        {isCircuit ? (
+                        {realtimeStatus === '正常' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[11px] font-semibold">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            <span>正常</span>
+                          </span>
+                        ) : isCircuit ? (
                           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-semibold">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-600"></span>
-                            <span>熔断管制中</span>
+                            <span>{realtimeStatus}</span>
                           </span>
                         ) : isPaused ? (
                           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-medium">
                             <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                            <span>打烊暂停中</span>
+                            <span>{realtimeStatus}</span>
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[11px] font-semibold">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
-                            <span>在线接单中</span>
-                          </span>
-                        )}
+                        ) : null}
                       </td>
 
                       {/* Supported Cards */}
                       <td className="px-4">
                         <div className="flex flex-wrap gap-1">
-                          {merchant.supportedCards.map((card, cidx) => (
+                          {merchant.supportedCards.slice(0, 3).map((card, cidx) => (
                             <span
                               key={cidx}
                               className={`text-[11px] px-1.5 py-0.5 rounded font-code-token ${
@@ -849,7 +840,7 @@ export const MerchantManagementView: React.FC<MerchantManagementViewProps> = ({
                       <td className="px-4 text-right">
                         <div className="flex flex-col items-end">
                           <span className="font-numeric-stat font-bold text-slate-900 text-[13px]">
-                            ${merchant.todayGmvUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            {merchant.todayGmvUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                           </span>
                           <span className="font-code-token text-[11px] text-slate-500">
                             {merchant.todayOrders.toLocaleString()} 单核销完成
@@ -869,7 +860,7 @@ export const MerchantManagementView: React.FC<MerchantManagementViewProps> = ({
                             <span className={`font-code-token ${
                               isWarn ? 'text-rose-600 font-bold' : 'text-emerald-700'
                             }`}>
-                              {isWarn ? `余 $${merchant.remainingQuotaUsd?.toLocaleString()} (不足)` : isCircuit ? `冻结 $${merchant.collateralUsd.toLocaleString()}` : `余 $${merchant.remainingQuotaUsd?.toLocaleString()}`}
+                              {isWarn ? `余 ${merchant.remainingQuotaUsd?.toLocaleString()} (不足)` : isCircuit ? `冻结 ${merchant.collateralUsd.toLocaleString()}` : `余 ${merchant.remainingQuotaUsd?.toLocaleString()}`}
                             </span>
                           </div>
                           <div className="w-full bg-slate-100 h-1.5 rounded-full mt-1 overflow-hidden border border-slate-200/40">

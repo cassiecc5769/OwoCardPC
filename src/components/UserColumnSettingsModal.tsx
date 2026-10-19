@@ -15,21 +15,29 @@ export interface ColumnConfigItem {
 export const DEFAULT_USER_COLUMNS: ColumnConfigItem[] = [
   {
     id: 'uid_kyc',
-    name: '用户UID / 认证资质',
+    name: '用户UID',
     category: 'basic',
     categoryLabel: '基础身份',
-    description: '展示用户唯一ID、一键复制功能、KYC实名认证阶段与证件类型',
+    description: '展示用户唯一ID与一键复制功能',
     visible: true,
     required: true
   },
   {
     id: 'user_info',
-    name: '用户昵称 / 关联手机',
+    name: '用户昵称 / 注册账号 / 关联邮箱',
     category: 'basic',
     categoryLabel: '基础身份',
-    description: '用户头像、昵称展示、国际手机号与涉嫌高危碰卡风控标记',
+    description: '用户头像、昵称、注册手机号与脱敏关联邮箱',
     visible: true,
     required: true
+  },
+  {
+    id: 'invite_code',
+    name: '邀请码',
+    category: 'basic',
+    categoryLabel: '基础身份',
+    description: '用户注册绑定的邀请码',
+    visible: true
   },
   {
     id: 'tier',
@@ -41,7 +49,7 @@ export const DEFAULT_USER_COLUMNS: ColumnConfigItem[] = [
   },
   {
     id: 'tags',
-    name: '客群运营标签',
+    name: '客服运营标签',
     category: 'risk_ops',
     categoryLabel: '运营与风控',
     description: '核心主力、大宗出卡、VIP专享、低频唤醒等精细化分层标签',
@@ -57,10 +65,10 @@ export const DEFAULT_USER_COLUMNS: ColumnConfigItem[] = [
   },
   {
     id: 'gmv',
-    name: '累计出卡总额 (GMV)',
+    name: '累计出卡总额',
     category: 'finance',
     categoryLabel: '交易与资金',
-    description: '历史累计出卡成交人民币总额及等值美元折算',
+    description: '历史累计出卡成交人民币总额',
     visible: true
   },
   {

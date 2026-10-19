@@ -335,7 +335,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (path === 'service-analytics' && (currentPath === 'service-analytics' || currentPath === 'fulfillment-analytics' || currentPath === 'robot-analytics' || currentPath === 'efficiency-analytics')) return true;
     if (path === 'report-standard' && (currentPath === 'report-standard' || currentPath === 'report-custom' || currentPath === 'report-export' || currentPath === 'report-center' || currentPath === 'data-reports')) return true;
     if (path === 'card-config' && (currentPath === 'card-config' || currentPath === 'card-catalog' || currentPath === 'trading-config' || currentPath === 'business-config')) return true;
-    if (path === 'rule-quote' && (currentPath === 'rule-quote' || currentPath === 'rule-card-check' || currentPath === 'rule-risk' || currentPath === 'rule-sla' || currentPath === 'rule-loss' || currentPath === 'rules-config' || currentPath === 'trading-rules')) return true;
+    if (path === 'rule-quote' && (currentPath === 'rule-quote' || currentPath === 'rule-card-check' || currentPath === 'rule-card-making' || currentPath === 'rule-withdrawal' || currentPath === 'rule-risk' || currentPath === 'rule-sla' || currentPath === 'rule-loss' || currentPath === 'rules-config' || currentPath === 'trading-rules')) return true;
     if (path === 'permission-config' && currentPath === 'permission-config') return true;
     if (path === 'basic-config' && (currentPath === 'basic-config' || currentPath === 'system-management' || currentPath === 'message-config' || currentPath === 'audit-logs')) return true;
     return false;
